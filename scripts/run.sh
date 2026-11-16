@@ -5,11 +5,8 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 
-PY=""
-for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
-  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
-done
-[ -n "$PY" ] || { echo "python3 not found" >&2; exit 1; }
+. scripts/find_python.sh
+[ -n "$PY" ] || { echo "Python 3.11+ not found (set BABEBASKET_PYTHON)" >&2; exit 1; }
 
 mkdir -p data/logs
 LOG="data/logs/$(date +%Y-%m-%d)-$1.log"

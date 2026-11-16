@@ -42,24 +42,25 @@ database with status `approved`, ready for the publishing step.
 
 ### n8n
 
-`scripts/run.sh <command>` is what n8n calls: it finds Python, logs to `data/logs/`,
-and posts a ⚠️ alert to the Discord channel if a run fails.
+n8n runs in Docker, so it reaches the Mac over SSH (`host.docker.internal`) and runs
+`scripts/run.sh` there: it finds Python 3.11+, logs to `data/logs/`, and posts a ⚠️ alert to
+the Discord channel if a run fails.
 
-Import both workflows (n8n → Workflows → ⋯ → Import from File), then toggle them Active:
-
-| File | Schedule (Europe/Berlin) | Runs |
+| File | Schedule (Europe/Berlin) | SSH command |
 |---|---|---|
-| `n8n/daily.json` | 07:00 daily | `run.sh daily`: scrape, draft, send cards |
-| `n8n/check.json` | every 10 min, 07–23h | `run.sh check`: read approvals |
+| `n8n/daily.json` | 07:00 daily | `daily`: scrape, draft, send cards |
+| `n8n/check.json` | every 10 min, 07–23h | `check`: read approvals |
 
-They expect the repo at `~/BabeBasketAutomation`; edit the command in the node if it lives elsewhere.
-
-Requirements:
-- n8n installed natively (npm/Homebrew), so its Execute Command node can run Mac programs.
-  If n8n runs in Docker, the command runs inside the container instead; use the SSH node to
-  `host.docker.internal` (System Settings → General → Sharing → Remote Login) with the same command.
-- n8n 2.0+ hides the Execute Command node by default. If it shows as unknown after import,
-  start n8n with `NODES_EXCLUDE="[]" n8n start`.
+One-time setup (already done on the Mac mini):
+1. System Settings → General → Sharing → Remote Login on.
+2. A dedicated key `~/.ssh/n8n_babebasket`, listed in `~/.ssh/authorized_keys` as
+   `restrict,command="~/BabeBasketAutomation/scripts/ssh_gate.sh" …`, so it can only run
+   `daily` or `check` (no shell, no forwarding).
+3. Import: `docker cp n8n/daily.json n8n-n8n-1:/tmp/ && docker exec n8n-n8n-1 n8n import:workflow --input=/tmp/daily.json`
+   (same for `check.json`). The fixed workflow ids make re-imports update in place.
+4. In n8n: Credentials → New → SSH Private Key, name `Mac mini (babebasket)`, host
+   `host.docker.internal`, port 22, user = your Mac user, private key = contents of
+   `~/.ssh/n8n_babebasket`. Select it in each workflow's SSH node, run once, then set Active.
 
 ## Settings
 

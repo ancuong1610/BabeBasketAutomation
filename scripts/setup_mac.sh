@@ -3,8 +3,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-PY=/opt/homebrew/bin/python3
-[ -x "$PY" ] || PY=$(command -v python3)
+. scripts/find_python.sh
+[ -n "$PY" ] || { echo "Python 3.11+ not found. Install: brew install python (or uv python install 3.11)"; exit 1; }
 echo "Python: $PY ($($PY --version))"
 $PY -c 'import sys; assert sys.version_info >= (3, 11), "need Python 3.11+ (brew install python)"'
 
