@@ -115,7 +115,9 @@ class DiscordTest(unittest.TestCase):
     def _decide(self, reactions, owners=()):
         def fake(channel, message, emoji):
             return reactions.get(emoji, [{"id": "bot", "bot": True}])
-        with mock.patch.object(discord, "reactors", side_effect=fake):
+        counts = {"reactions": [{"emoji": {"name": e}, "count": 1 + len(u)} for e, u in reactions.items()]}
+        with mock.patch.object(discord, "reactors", side_effect=fake), \
+                mock.patch.object(discord, "_call", return_value=counts):
             return discord.read_decision("c", "m", 4, list(owners))
 
     def test_undecided_when_only_bot_reacted(self):

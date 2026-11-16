@@ -87,13 +87,22 @@ def reactors(channel_id: str, message_id: str, emoji: str) -> list[dict]:
 
 
 def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
-    """None while undecided; otherwise {'status': 'approved'|'rejected', 'caption': int|None}."""
+    """None while undecided; otherwise {'status': 'approved'|'rejected', 'caption': int|None}.
+
+    One call reads the reaction counts; user lists are only fetched for emojis that
+    someone besides the bot has tapped (count > 1), which keeps us clear of rate limits.
+    """
+    message = _call("GET", f"/channels/{channel_id}/messages/{message_id}")
+    tapped = {r["emoji"]["name"] for r in message.get("reactions", []) if r.get("count", 0) > 1}
+    owner_set = {str(o) for o in owners}
 
     def by_owner(emoji: str) -> bool:
+        if emoji not in tapped:
+            return False
         for user in reactors(channel_id, message_id, emoji):
             if user.get("bot"):
                 continue
-            if not owners or str(user["id"]) in {str(o) for o in owners}:
+            if not owner_set or str(user["id"]) in owner_set:
                 return True
         return False
 
