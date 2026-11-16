@@ -40,5 +40,5 @@ model = "google/gemini-3.8-flash"
 temperature = 0.8
 
 [discord]
-channel_id = ""          # the approval channel (right-click channel -> Copy Channel ID)
+channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
 owner_user_ids = []      # only these users' reactions count; empty = any non-bot user
