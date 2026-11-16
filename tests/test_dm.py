@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from scraper import dm
+from babebasket.stores import dm
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "dm_crawl_page.json").read_text())
 
@@ -15,7 +15,7 @@ class ParseProductTest(unittest.TestCase):
 
     def test_core_fields(self):
         self.assertEqual(self.row["store"], "dm")
-        self.assertEqual(self.row["dan"], 1676340)
+        self.assertEqual(self.row["product_id"], "1676340")
         self.assertEqual(self.row["brand"], "GARNIER FRUCTIS")
         self.assertEqual(self.row["name"], "Haarmaske Aloe Vera Hair Food 3in1, trockenes Haar, 400 ml")
 
@@ -67,8 +67,25 @@ class CrawlTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIn("categoryNames=Haarkur+%26+Haarmaske", calls[0])
         self.assertIn("currentPage=1", calls[1])
-        # same products on both fake pages: duplicates are dropped by dan
+        # same products on both fake pages: duplicates are dropped by product_id
         self.assertEqual(len(rows), len(FIXTURE["products"]))
+
+
+class DetailAndReviewsTest(unittest.TestCase):
+    def test_detail_claims_and_usage(self):
+        detail = dm.parse_detail(json.loads((Path(__file__).parent / "fixtures" / "dm_detail.json").read_text()))
+        self.assertIn("Mit Anti-Frizz-Effekt", detail["claims"])
+        self.assertNotIn("GTIN", detail["description"])
+        self.assertIn("5 Minuten", detail["usage"])
+        self.assertEqual(detail["breadcrumbs"], ["Haare", "Haarpflege", "Leave-In"])
+        self.assertTrue(detail["price_note"].startswith("nicht erhöht seit"))
+        self.assertTrue(detail["images"][0].startswith("https://products.dm-static.com/"))
+
+    def test_reviews(self):
+        reviews = dm.parse_reviews(json.loads((Path(__file__).parent / "fixtures" / "dm_reviews.json").read_text()))
+        self.assertEqual(len(reviews), 3)
+        self.assertTrue(all(r["text"] for r in reviews))
+        self.assertIsInstance(reviews[0]["helpful"], int)
 
 
 class CsvTest(unittest.TestCase):

@@ -1,0 +1,44 @@
+# babe basket pipeline settings. Secrets (API keys, bot token) go in .env, never here.
+
+[dm]
+# Category names exactly as in dm.de's category filter.
+categories = [
+    "Haarkur & Haarmaske", "Leave-In", "Haaröl",
+    "Handcreme & Handmasken", "Bodylotion & Hautcreme",
+    "Vitamine", "Weihnachtliche Geschenksets",
+]
+
+[rossmann]
+# Category page URLs on rossmann.de (no query string). Fill in after running the probe:
+#   python3 -m babebasket.stores.rossmann probe
+categories = []
+
+[shortlist]
+per_day = 6              # products drafted per day
+min_rating = 4.2
+min_reviews = 30
+repeat_after_days = 45   # don't redraft a product sooner than this
+# Brands the shop already sells get a small boost.
+preferred_brands = ["Balea", "Garnier", "L'ORÉAL", "Elvital", "NIVEA", "Dove", "Doppelherz", "ISANA", "Jean&Len", "Tesori d'Oriente", "KIKO"]
+
+[pricing]
+# Simple placeholder rule; edit later.
+# sale price (VND) = (shelf price x (1 - coupon) x vnd_per_eur + shipping_vnd_per_item) x (1 + markup)
+vnd_per_eur = 30000
+shipping_vnd_per_item = 0
+markup = 0.35
+round_to_thousand = 5    # round the 🐠 price up to a multiple of this
+
+[coupons]
+# Standing coupon assumed per store, in percent.
+dm = 0
+rossmann = 10
+
+[llm]
+# Any OpenRouter model id. Pick one with good Vietnamese.
+model = "google/gemini-2.5-flash"
+temperature = 0.8
+
+[discord]
+channel_id = ""          # the approval channel (right-click channel -> Copy Channel ID)
+owner_user_ids = []      # only these users' reactions count; empty = any non-bot user

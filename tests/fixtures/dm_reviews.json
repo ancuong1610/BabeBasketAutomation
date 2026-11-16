@@ -1,0 +1,203 @@
+{
+ "reviews": [
+  {
+   "author": "Reviewer",
+   "isIncentivized": false,
+   "photos": [],
+   "reviewId": "1143020293",
+   "reviewSubmission": "vor 3 Jahren",
+   "rating": 5,
+   "reviewText": "Habe seit ca 2 Wochen sehr trockene und stohige spitzen. Habe meine gewohnten Spülungen und Masken verwendet aber leider haben diese diesmal nichts gebracht. Da ich gern was neues ausprobiere hab ich mir diese haarkir gekauft. 1. Duftet die richtig gut nach Pfirsich und nicht zu künstlich, 2. Lässt sich super verteilen 3. Sind meine spitzen bereits nach der 1. Anwendung wieder wie neu und 4. Hinterlässt die Kur einen schönen dezenten natürlichen Pfirsichduft. Wird definitiv nachgekauft und absolut empfehlenswert!",
+   "title": "Sehr gute Haarkur",
+   "modules": [
+    {
+     "type": "iconLabel",
+     "data": {
+      "icon": "isRecommended",
+      "data": [
+       {
+        "label": "Ja, ich empfehle dieses Produkt."
+       }
+      ]
+     }
+    },
+    {
+     "type": "iconLabel",
+     "data": {
+      "data": [
+       {
+        "title": "Person",
+        "label": "Weiblich, 30 - 34 Jahre"
+       },
+       {
+        "title": "Haartyp",
+        "label": "coloriert, geschädigt, trocken / strapaziert, fein & dünn"
+       }
+      ]
+     }
+    },
+    {
+     "type": "secondaryRatings",
+     "data": [
+      {
+       "bar": {
+        "title": "Wirkung",
+        "value": 5,
+        "maxValue": 5,
+        "accessibilityLabel": "Wirkung 5 von 5 Sternen"
+       }
+      }
+     ]
+    },
+    {
+     "type": "helpful",
+     "data": {
+      "positiveFeedbackCount": 26,
+      "negativeFeedbackCount": 0
+     }
+    },
+    {
+     "type": "empty"
+    }
+   ],
+   "isNativeLanguage": true,
+   "lastModifiedTime": "2026-05-11T19:56:35.000+00:00",
+   "sourceClient": "dm-de",
+   "verifiedPurchaser": false
+  },
+  {
+   "author": "Reviewer",
+   "isIncentivized": false,
+   "photos": [],
+   "reviewId": "1178780883",
+   "reviewSubmission": "vor 2 Jahren",
+   "rating": 5,
+   "reviewText": "Es ist so super es hat meine Haare so seidig und glänzend gemacht! Ich Liebs völlig dem Preis wert !!",
+   "title": "Es lohnt sich!",
+   "modules": [
+    {
+     "type": "iconLabel",
+     "data": {
+      "icon": "isRecommended",
+      "data": [
+       {
+        "label": "Ja, ich empfehle dieses Produkt."
+       }
+      ]
+     }
+    },
+    {
+     "type": "photos",
+     "data": [
+      {
+       "label": "Es ist wunderschön!",
+       "thumbnail": {
+        "src": "https://photos-eu.bazaarvoice.com/photo/2/cGhvdG86ZG0tZGU/cccf827a-801b-5f27-8b24-545ac0b02c2a"
+       },
+       "regular": {
+        "src": "https://photos-eu.bazaarvoice.com/photo/2/cGhvdG86ZG0tZGU/d6d4989d-8dc4-5960-b820-e8cd11884f4f"
+       },
+       "large": {
+        "src": "https://photos-eu.bazaarvoice.com/photo/2/cGhvdG86ZG0tZGU/261b757a-a91b-581a-9028-288772f13f55"
+       }
+      }
+     ]
+    },
+    {
+     "type": "iconLabel",
+     "data": {
+      "data": [
+       {
+        "title": "Person",
+        "label": "Weiblich, 16 - 19 Jahre"
+       },
+       {
+        "title": "Haartyp",
+        "label": "geschädigt"
+       }
+      ]
+     }
+    },
+    {
+     "type": "secondaryRatings",
+     "data": [
+      {
+       "bar": {
+        "title": "Wirkung",
+        "value": 5,
+        "maxValue": 5,
+        "accessibilityLabel": "Wirkung 5 von 5 Sternen"
+       }
+      }
+     ]
+    },
+    {
+     "type": "helpful",
+     "data": {
+      "positiveFeedbackCount": 16,
+      "negativeFeedbackCount": 3
+     }
+    },
+    {
+     "type": "empty"
+    }
+   ],
+   "isNativeLanguage": true,
+   "lastModifiedTime": "2026-10-18T11:47:19.000+00:00",
+   "sourceClient": "dm-de",
+   "verifiedPurchaser": false
+  },
+  {
+   "author": "Reviewer",
+   "isIncentivized": false,
+   "photos": [],
+   "reviewId": "1181193635",
+   "reviewSubmission": "vor 2 Jahren",
+   "rating": 4,
+   "reviewText": "Ich habe die Haarkur von meiner Schwester geschenkt bekommen und mir gefällt sie von der Wirkung her sehr gut. Meine Haare waren danach gut kämmbar. Doch einen Stern Abzug gibt es für die Verpackung. Sie lässt sich nur mit einer Schere öffnen und das ist ein schwieriges Unterfangen! Deshalb sollte die Verpackung genauso sein wie die anderen Haarkuren von Balea. Was mir auch noch gut gefallen hat, war der Duft. Deshalb wünsche ich mir das dazugehörige Shampoo Seidenglanz als Reisegröße, ein Duschbad von Balea mit Pfirsichduft (sowohl als normale Größe als auch als Reisegröße) und eine Deocreme.",
+   "title": "Gute Wirkung",
+   "modules": [
+    {
+     "type": "iconLabel",
+     "data": {
+      "data": [
+       {
+        "title": "Person",
+        "label": "Weiblich, 30 - 34 Jahre"
+       }
+      ]
+     }
+    },
+    {
+     "type": "secondaryRatings",
+     "data": [
+      {
+       "bar": {
+        "title": "Wirkung",
+        "value": 5,
+        "maxValue": 5,
+        "accessibilityLabel": "Wirkung 5 von 5 Sternen"
+       }
+      }
+     ]
+    },
+    {
+     "type": "helpful",
+     "data": {
+      "positiveFeedbackCount": 4,
+      "negativeFeedbackCount": 1
+     }
+    },
+    {
+     "type": "empty"
+    }
+   ],
+   "isNativeLanguage": true,
+   "lastModifiedTime": "2026-11-07T20:50:18.000+00:00",
+   "sourceClient": "dm-de",
+   "verifiedPurchaser": false
+  }
+ ],
+ "totalResultsLabel": "90 Ergebnisse",
+ "totalResults": 90
+}
