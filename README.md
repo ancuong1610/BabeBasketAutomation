@@ -38,18 +38,28 @@ database with status `approved`, ready for the publishing step.
    - `DISCORD_BOT_TOKEN`: Discord Developer Portal → your app → Bot → Reset Token
    - `DISCORD_CHANNEL_ID`: in Discord turn on Developer Mode, right-click the approval channel → Copy Channel ID
 3. Put your own Discord user ID in `config.toml` → `[discord] owner_user_ids`, so only your taps count.
-4. Test: `python3 -m babebasket try dm 3050111`, then `python3 -m babebasket daily`.
+4. Run `./scripts/setup_mac.sh`: runs the tests, one LLM draft, and a Discord test message.
 
 ### n8n
 
-Two Schedule Trigger → Execute Command workflows:
+`scripts/run.sh <command>` is what n8n calls: it finds Python, logs to `data/logs/`,
+and posts a ⚠️ alert to the Discord channel if a run fails.
 
-| When | Command |
-|---|---|
-| daily, 07:00 | `cd ~/BabeBasketAutomation && /opt/homebrew/bin/python3 -m babebasket daily` |
-| every 10 min, 07:00–23:00 | `cd ~/BabeBasketAutomation && /opt/homebrew/bin/python3 -m babebasket check` |
+Import both workflows (n8n → Workflows → ⋯ → Import from File), then toggle them Active:
 
-Each command exits non-zero on failure, so n8n's error workflow can alert you.
+| File | Schedule (Europe/Berlin) | Runs |
+|---|---|---|
+| `n8n/daily.json` | 07:00 daily | `run.sh daily`: scrape, draft, send cards |
+| `n8n/check.json` | every 10 min, 07–23h | `run.sh check`: read approvals |
+
+They expect the repo at `~/BabeBasketAutomation`; edit the command in the node if it lives elsewhere.
+
+Requirements:
+- n8n installed natively (npm/Homebrew), so its Execute Command node can run Mac programs.
+  If n8n runs in Docker, the command runs inside the container instead; use the SSH node to
+  `host.docker.internal` (System Settings → General → Sharing → Remote Login) with the same command.
+- n8n 2.0+ hides the Execute Command node by default. If it shows as unknown after import,
+  start n8n with `NODES_EXCLUDE="[]" n8n start`.
 
 ## Settings
 

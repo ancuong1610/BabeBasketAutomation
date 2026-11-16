@@ -161,12 +161,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("post")
     sub.add_parser("check")
     sub.add_parser("daily")
+    nt = sub.add_parser("notify", help="post a message to the approval channel")
+    nt.add_argument("text")
     t = sub.add_parser("try")
     t.add_argument("store")
     t.add_argument("product_id")
     args = ap.parse_args(argv)
 
     cfg = config.load()
+    if args.cmd == "notify":
+        from babebasket import discord
+
+        discord._call("POST", f"/channels/{cfg['discord']['channel_id']}/messages",
+                      {"content": args.text.replace("\\n", "\n")[:1900], "allowed_mentions": {"parse": []}})
+        return 0
     if args.cmd == "try":
         cmd_try(cfg, args.store, args.product_id)
         return 0

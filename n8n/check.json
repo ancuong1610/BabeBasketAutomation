@@ -1,0 +1,57 @@
+{
+  "name": "babe basket · check approvals",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/10 7-23 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Every 10 min, 07–23h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "cd \"$HOME/BabeBasketAutomation\" && ./scripts/run.sh check"
+      },
+      "name": "Read Discord approvals",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        260,
+        0
+      ],
+      "notes": "Reads ✅/❌ and caption reactions on the cards.",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Every 10 min, 07–23h": {
+      "main": [
+        [
+          {
+            "node": "Read Discord approvals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Berlin",
+    "saveManualExecutions": true
+  },
+  "active": false
+}
