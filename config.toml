@@ -36,7 +36,7 @@ rossmann = 10
 
 [llm]
 # Any OpenRouter model id. Pick one with good Vietnamese.
-model = "google/gemini-2.5-flash"
+model = "google/gemini-3.8-flash"
 temperature = 0.8
 
 [discord]

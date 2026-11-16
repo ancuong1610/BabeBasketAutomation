@@ -6,6 +6,7 @@ which code replaces with the computed sale price.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 
@@ -30,6 +31,7 @@ Giọng văn caption (tiếng Việt):
 - Chỉ dựa vào công dụng do nhà sản xuất công bố và review được cung cấp. Thực phẩm chức năng/thuốc: chỉ nhắc \
   công dụng nhà sản xuất công bố, không hứa hẹn chữa bệnh.
 - Nghĩ đến khách Việt: khí hậu nóng ẩm, nắng, nước cứng/clo, thói quen hằng ngày.
+- Nhãn trên ảnh (labels) và caption chỉ bằng tiếng Việt, không để lại từ tiếng Đức (Keratin, Vitamin C… thì được).
 - Thiên về bán hàng, kết bằng một lời rủ mua nhẹ nhàng (inbox/order sốp nha).
 
 Câu mẫu đúng giọng của shop:
@@ -39,7 +41,9 @@ Câu mẫu đúng giọng của shop:
 
 Chỉ trả về JSON hợp lệ, không có chữ nào khác."""
 
-USER_TEMPLATE = """Sản phẩm (dữ liệu từ {store}):
+USER_TEMPLATE = """Hôm nay là {today} (mùa ở Hà Nội: {season}). Đừng nhắc sai mùa.
+
+Sản phẩm (dữ liệu từ {store}):
 {product}
 
 Review của người mua ở Đức (tiếng Đức):
@@ -62,6 +66,12 @@ Trả về JSON đúng cấu trúc sau:
 }}
 Bốn caption phải thật sự khác nhau. Caption "engagement question" là bài tương tác mềm, không bán trực tiếp. \
 Mỗi caption 2–5 câu.{extra}"""
+
+HANOI_SEASON = {
+    1: "đông, lạnh khô", 2: "cuối đông, nồm ẩm", 3: "xuân, nồm ẩm", 4: "xuân, ấm dần", 5: "đầu hè, nóng",
+    6: "hè, nắng nóng", 7: "hè, nắng nóng, mưa rào", 8: "hè, mưa nhiều", 9: "đầu thu", 10: "thu, hanh khô",
+    11: "cuối thu, hanh khô, se lạnh", 12: "đông, lạnh khô",
+}
 
 SUPPLEMENT_NOTE = (
     "\nĐây là thực phẩm chức năng: chỉ dùng công dụng nhà sản xuất công bố ở trên, "
@@ -91,7 +101,10 @@ def build_messages(product: dict, detail: dict, reviews: list[dict]) -> list[dic
         if not r.get("incentivized")
     ][:12]
     extra = SUPPLEMENT_NOTE if is_supplement(detail, product) else ""
+    today = dt.date.today()
     user = USER_TEMPLATE.format(
+        today=today.strftime("%d/%m/%Y"),
+        season=HANOI_SEASON[today.month],
         store=product["store"],
         product=json.dumps(info, ensure_ascii=False, indent=1),
         reviews="\n".join(review_lines) or "(không có review)",

@@ -16,7 +16,7 @@ from babebasket.http import request_json
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
-BOT_UA = "DiscordBot (https://github.com/ancuong1610/BabeBasketAutomation, 0.1)"
+BOT_UA = "DiscordBot (https://localhost, 0.1)"  # format Discord requires
 
 
 def _call(method: str, path: str, body: dict | None = None):
