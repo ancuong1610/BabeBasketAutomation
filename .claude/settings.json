@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:products.dm.de)",
+      "WebFetch(domain:stars.services.dmtech.com)",
+      "WebFetch(domain:product-search.services.dmtech.com)",
+      "Bash(curl:*)"
+    ]
+  }
+}
