@@ -1,0 +1,144 @@
+{
+ "products": [
+  {
+   "gtin": 3600542511049,
+   "dan": 1676340,
+   "brandName": "GARNIER FRUCTIS",
+   "title": "Haarmaske Aloe Vera Hair Food 3in1, trockenes Haar, 400 ml",
+   "tileData": {
+    "dan": 1676340,
+    "gtin": 3600542511049,
+    "self": "/p/d/1676340/garnier-fructis-haarmaske-aloe-vera-hair-food-3in1-trockenes-haar",
+    "brand": {
+     "name": "GARNIER FRUCTIS"
+    },
+    "price": {
+     "price": {
+      "current": {
+       "value": "5,95 €"
+      }
+     },
+     "prefix": "Einzelpreis",
+     "tileInfos": [
+      "0,4 l (14,88 € je 1 l)"
+     ]
+    },
+    "title": {
+     "tileHeadline": "Haarmaske Aloe Vera Hair Food 3in1, trockenes Haar, 400 ml"
+    },
+    "images": [
+     {
+      "alt": "Haarmaske Aloe Vera Hair Food 3in1, trockenes Haar GARNIER FRUCTIS",
+      "tileSrc": "https://products.dm-static.com/images/f_auto,q_auto,c_fit,h_320,w_320/v1788991845/assets/pas/images/d0f83b33-9459-43be-8aa9-89a2da9b2498/garnier-fructis-haarmaske-aloe-vera-hair-food-3in1-trockenes-haar",
+      "isAiGenerated": false,
+      "backgroundColor": "#F1F9F5"
+     }
+    ],
+    "infoHint": {
+     "text": "Hinweise"
+    },
+    "netPrice": {
+     "price": {
+      "current": {
+       "value": "5,00 €"
+      }
+     },
+     "prefix": "Einzelpreis",
+     "tileInfos": [
+      "0,4 l (12,50 € je 1 l)"
+     ]
+    },
+    "a11yLabel": "Marke: GARNIER FRUCTIS; Produktname: Haarmaske Aloe Vera Hair Food 3in1, trockenes Haar, 400 ml; Preis: 5,95 €; Grundpreis: 0,4 l (14,88 € je 1 l)",
+    "isPharmacy": false,
+    "trackingData": {
+     "brand": "GARNIER FRUCTIS",
+     "price": 5.95,
+     "currency": "EUR",
+     "categories": [
+      "Haarkur & Haarmaske"
+     ],
+     "isPharmacy": false
+    },
+    "hideCouponEyecatcher": false
+   },
+   "context": {
+    "rating": {
+     "ratingValue": 4.6416,
+     "ratingCount": 1487
+    }
+   }
+  },
+  {
+   "gtin": 3600524189921,
+   "dan": 2976343,
+   "brandName": "L'ORÉAL PARiS ELVITAL",
+   "title": "Haarserum Fiber Booster, Anti-Haarverlust, 102 ml",
+   "tileData": {
+    "dan": 2976343,
+    "gtin": 3600524189921,
+    "self": "/p/d/2976343/l-oreal-paris-elvital-haarserum-fiber-booster-anti-haarverlust",
+    "brand": {
+     "name": "L'ORÉAL PARiS ELVITAL"
+    },
+    "price": {
+     "price": {
+      "current": {
+       "value": "13,95 €"
+      }
+     },
+     "prefix": "Einzelpreis",
+     "tileInfos": [
+      "0,102 l (136,76 € je 1 l)"
+     ]
+    },
+    "title": {
+     "tileHeadline": "Haarserum Fiber Booster, Anti-Haarverlust, 102 ml"
+    },
+    "images": [
+     {
+      "alt": "Haarserum Fiber Booster, Anti-Haarverlust L'ORÉAL PARiS ELVITAL",
+      "tileSrc": "https://products.dm-static.com/images/f_auto,q_auto,c_fit,h_320,w_320/v1778191608/assets/pas/images/351e42fc-4dc8-46f7-8d3e-55148f134d8d/l-oreal-paris-elvital-haarserum-fiber-booster-anti-haarverlust",
+      "isAiGenerated": false,
+      "backgroundColor": "#F9F4F1"
+     }
+    ],
+    "infoHint": {
+     "text": "Hinweise"
+    },
+    "netPrice": {
+     "price": {
+      "current": {
+       "value": "11,72 €"
+      }
+     },
+     "prefix": "Einzelpreis",
+     "tileInfos": [
+      "0,102 l (114,92 € je 1 l)"
+     ]
+    },
+    "a11yLabel": "Marke: L'ORÉAL PARiS ELVITAL; Produktname: Haarserum Fiber Booster, Anti-Haarverlust, 102 ml; Preis: 13,95 €; Grundpreis: 0,102 l (136,76 € je 1 l)",
+    "isPharmacy": false,
+    "trackingData": {
+     "brand": "L'ORÉAL PARiS ELVITAL",
+     "price": 13.95,
+     "currency": "EUR",
+     "categories": [
+      "Haarkur & Haarmaske"
+     ],
+     "isPharmacy": false
+    },
+    "hideCouponEyecatcher": false
+   },
+   "context": {
+    "rating": {
+     "ratingValue": 4.2539,
+     "ratingCount": 571
+    }
+   }
+  }
+ ],
+ "count": 156,
+ "currentPage": 0,
+ "pageSize": 2,
+ "totalPages": 78
+}
