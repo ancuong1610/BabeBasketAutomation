@@ -62,6 +62,21 @@ One-time setup (already done on the Mac mini):
    `host.docker.internal`, port 22, user = your Mac user, private key = contents of
    `~/.ssh/n8n_babebasket`. Select it in each workflow's SSH node, run once, then set Active.
 
+## Post image
+
+Every draft gets one finished image (1080×1350) that the Discord card shows:
+
+1. `scene.py` sends the dm/Rossmann packshot to a Gemini image model on OpenRouter
+   (`[image] model` in `config.toml`), which returns a photo of a hand holding the product
+   in a drugstore aisle. Any failure → `postimage.fallback_scene` (packshot on a cream background).
+2. `postimage.py` draws the text the LLM wrote in `labels` (title, hero, who_for, 2–3 points;
+   `mode` = `usage` for hair/styling, `benefits` otherwise) as red boxes in Be Vietnam Pro,
+   plus the logo from `assets/logo.jpg` (replace it with a larger file when available).
+3. Saved as `data/images/draft-<id>.jpg`; `post` uploads it with the card.
+
+Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
+Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.
+
 ## Settings
 
 All in `config.toml`: dm categories, shortlist size and thresholds, preferred brands,

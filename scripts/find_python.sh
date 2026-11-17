@@ -1,7 +1,7 @@
 # Sourced by run.sh / setup_mac.sh: sets PY to the first Python >= 3.11.
-# Override with BABEBASKET_PYTHON=/path/to/python3.
+# Prefers the project .venv (has Pillow for post images). Override with BABEBASKET_PYTHON=/path/to/python3.
 PY=""
-for candidate in ${BABEBASKET_PYTHON:-} /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+for candidate in ${BABEBASKET_PYTHON:-} "$PWD/.venv/bin/python" /opt/homebrew/bin/python3 /usr/local/bin/python3 \
     "$HOME/.local/bin/python3.13" "$HOME/.local/bin/python3.12" "$HOME/.local/bin/python3.11" \
     python3.13 python3.12 python3.11 python3; do
   [ -n "$candidate" ] || continue
