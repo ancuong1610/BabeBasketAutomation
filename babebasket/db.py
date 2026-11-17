@@ -89,3 +89,8 @@ def recently_drafted(conn: sqlite3.Connection, days: int) -> set[tuple[str, str]
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat(timespec="seconds")
     rows = conn.execute("SELECT store, product_id FROM drafts WHERE created_at >= ?", (cutoff,)).fetchall()
     return {(r["store"], r["product_id"]) for r in rows}
+
+
+def set_payload(conn: sqlite3.Connection, draft_id: int, payload: dict) -> None:
+    conn.execute("UPDATE drafts SET payload = ? WHERE id = ?", (json.dumps(payload, ensure_ascii=False), draft_id))
+    conn.commit()

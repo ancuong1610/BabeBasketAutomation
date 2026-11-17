@@ -254,3 +254,85 @@ class RossmannNextPageTest(unittest.TestCase):
         self.assertTrue(rows)
         for r in rows:
             self.assertTrue(r["gtin"].isdigit() and r["name"] and r["price_eur"] and r["product_url"].startswith(rossmann.SITE))
+
+
+def _png(color=(40, 90, 200), size=(300, 400)) -> bytes:
+    import io
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+IMAGE_PAYLOAD = {
+    "product": {"store": "dm", "product_id": "1", "brand": "Mixa", "name": "Urea", "image_url": "https://img/1.png"},
+    "draft": GOOD_DRAFT,
+}
+
+
+class BuildImageTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name) / "images" / "draft-1.jpg"
+        self.gen_calls = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _gen(self, result):
+        def gen(packshot, product, cfg):
+            self.gen_calls.append(product["product_id"])
+            return result
+        return gen
+
+    def test_build_image_uses_scene(self):
+        from babebasket import cli
+
+        payload = dict(IMAGE_PAYLOAD)
+        path = cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(_png((9, 9, 9), (928, 1152))))
+        self.assertEqual(path, str(self.out))
+        self.assertTrue(self.out.exists())
+        self.assertEqual((payload["image_path"], payload["image_source"]), (str(self.out), "gemini"))
+
+    def test_build_image_fallback_when_scene_none(self):
+        from babebasket import cli
+
+        payload = dict(IMAGE_PAYLOAD)
+        cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(None))
+        self.assertEqual(payload["image_source"], "fallback")
+        self.assertTrue(self.out.exists())
+
+    def test_build_image_fallback_when_scene_is_not_an_image(self):
+        from babebasket import cli
+
+        payload = dict(IMAGE_PAYLOAD)
+        cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(b"not an image"))
+        self.assertEqual(payload["image_source"], "fallback")
+
+    def test_build_image_packshot_download_fails(self):
+        from babebasket import cli
+
+        def fail(url):
+            raise RuntimeError("HTTP 404")
+
+        payload = dict(IMAGE_PAYLOAD)
+        self.assertIsNone(cli.build_image(payload, self.out, {}, fetch_bytes=fail, gen=self._gen(_png())))
+        self.assertEqual(self.gen_calls, [])
+        self.assertNotIn("image_path", payload)
+
+    def test_build_image_without_image_url(self):
+        from babebasket import cli
+
+        payload = {**IMAGE_PAYLOAD, "product": {**IMAGE_PAYLOAD["product"], "image_url": ""}}
+        self.assertIsNone(cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(_png())))
+
+    def test_set_payload_roundtrip(self):
+        conn = db.connect(":memory:")
+        draft_id = db.add_draft(conn, "dm", "1", {"a": 1})
+        db.set_payload(conn, draft_id, {"a": 2, "image_path": "x.jpg"})
+        row = db.drafts(conn, "drafted")[0]
+        self.assertEqual(json.loads(row["payload"]), {"a": 2, "image_path": "x.jpg"})

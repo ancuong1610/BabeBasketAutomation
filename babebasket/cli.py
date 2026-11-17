@@ -7,6 +7,7 @@
     python3 -m babebasket check             # read approvals from Discord
     python3 -m babebasket daily             # scrape + draft + post
     python3 -m babebasket try dm 3050111    # one product end to end, printed (no Discord)
+    python3 -m babebasket try dm 3050111 --image   # ... and render the post image
 """
 
 from __future__ import annotations
@@ -77,6 +78,53 @@ def make_draft(product: dict, cfg: dict) -> dict:
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
 
 
+def fetch_bytes(url: str) -> bytes:
+    import urllib.request
+
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (babebasket)"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read()
+
+
+def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None) -> str | None:
+    """Render the post image for a draft payload. Returns the file path, or None if there is no packshot.
+
+    Gemini scene first; if it fails or returns something that is not an image, the plain
+    fallback background is used. Sets payload["image_path"] and payload["image_source"].
+    """
+    import io
+
+    from PIL import Image, UnidentifiedImageError
+
+    from babebasket import postimage, scene
+
+    gen = gen or scene.generate
+    product = payload["product"]
+    if not product.get("image_url"):
+        return None
+    try:
+        packshot = fetch_bytes(product["image_url"])
+    except Exception as err:
+        print(f"! packshot download failed for {product['product_id']}: {err}", file=sys.stderr)
+        return None
+    labels = llm.image_labels(payload["draft"])
+    source, base = "fallback", None
+    generated = gen(packshot, product, cfg)
+    if generated:
+        try:
+            base = Image.open(io.BytesIO(generated))
+            base.load()
+            source = "gemini"
+        except (UnidentifiedImageError, OSError) as err:
+            print(f"! scene was not an image for {product['product_id']}: {err}", file=sys.stderr)
+            base = None
+    if base is None:
+        base = postimage.fallback_scene(packshot)
+    path = postimage.save(postimage.render(base, labels), out)
+    payload["image_path"], payload["image_source"] = str(path), source
+    return str(path)
+
+
 def cmd_draft(cfg: dict, conn, limit: int | None) -> None:
     for product in shortlist.pick(conn, cfg, limit):
         try:
@@ -85,6 +133,11 @@ def cmd_draft(cfg: dict, conn, limit: int | None) -> None:
             print(f"! {product['brand']} {product['name'][:40]}: {err}", file=sys.stderr)
             continue
         draft_id = db.add_draft(conn, product["store"], product["product_id"], payload)
+        try:
+            if build_image(payload, DATA / "images" / f"draft-{draft_id}.jpg", cfg):
+                db.set_payload(conn, draft_id, payload)
+        except Exception as err:  # never lose a draft over its image
+            print(f"! image for draft #{draft_id}: {err}", file=sys.stderr)
         usage = payload["draft"].get("_usage", {})
         print(f"draft #{draft_id}: {product['brand']} · {product['name'][:50]}  "
               f"({usage.get('total_tokens', '?')} tokens)")
@@ -127,7 +180,7 @@ def cmd_check(cfg: dict, conn) -> None:
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
 
 
-def cmd_try(cfg: dict, store: str, product_id: str) -> None:
+def cmd_try(cfg: dict, store: str, product_id: str, image: bool = False) -> None:
     """One product end to end, printed. Needs OPENROUTER_API_KEY; does not touch Discord or the DB."""
     if store != "dm":
         raise SystemExit("try supports dm for now")
@@ -149,6 +202,9 @@ def cmd_try(cfg: dict, store: str, product_id: str) -> None:
     }
     payload = make_draft(product, cfg)
     print(json.dumps({k: payload[k] for k in ("product", "quote", "draft", "warnings")}, ensure_ascii=False, indent=1))
+    if image:
+        path = build_image(payload, DATA / "images" / f"try-{product_id}.jpg", cfg)
+        print(f"image ({payload.get('image_source', 'none')}): {path}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("try")
     t.add_argument("store")
     t.add_argument("product_id")
+    t.add_argument("--image", action="store_true", help="also render the post image to data/images/")
     args = ap.parse_args(argv)
 
     cfg = config.load()
@@ -176,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
                       {"content": args.text.replace("\\n", "\n")[:1900], "allowed_mentions": {"parse": []}})
         return 0
     if args.cmd == "try":
-        cmd_try(cfg, args.store, args.product_id)
+        cmd_try(cfg, args.store, args.product_id, args.image)
         return 0
     conn = db.connect()
     if args.cmd == "scrape":
