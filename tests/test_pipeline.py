@@ -336,3 +336,46 @@ class BuildImageTest(unittest.TestCase):
         db.set_payload(conn, draft_id, {"a": 2, "image_path": "x.jpg"})
         row = db.drafts(conn, "drafted")[0]
         self.assertEqual(json.loads(row["payload"]), {"a": 2, "image_path": "x.jpg"})
+
+
+CARD_PRODUCT = {"brand": "Balea", "name": "Kur", "rating": 4.1, "review_count": 9, "store": "dm",
+                "image_url": "https://img/pack.png", "product_url": "https://www.dm.de/p/1"}
+CARD_QUOTE = {"shelf_eur": 2.75, "coupon_pct": 0, "cost_eur": 2.75, "sale_k": 115, "margin_k": 33}
+
+
+class DiscordImageTest(unittest.TestCase):
+    def test_card_uses_attachment_when_image(self):
+        card = discord.build_card(1, CARD_PRODUCT, CARD_QUOTE, GOOD_DRAFT, [], has_image=True)
+        self.assertEqual(card["embeds"][0]["image"], {"url": "attachment://post.jpg"})
+        self.assertEqual(card["attachments"], [{"id": 0, "filename": "post.jpg"}])
+
+    def test_card_uses_packshot_without_image(self):
+        card = discord.build_card(1, CARD_PRODUCT, CARD_QUOTE, GOOD_DRAFT, [])
+        self.assertEqual(card["embeds"][0]["image"], {"url": "https://img/pack.png"})
+        self.assertNotIn("attachments", card)
+
+    def test_multipart_body(self):
+        from babebasket import http
+
+        body, ctype = http.encode_multipart({"payload_json": '{"a":1}'}, [("files[0]", "post.jpg", b"\xff\xd8JPEG", "image/jpeg")])
+        boundary = ctype.split("boundary=")[1]
+        self.assertTrue(ctype.startswith("multipart/form-data; boundary="))
+        self.assertIn(b'name="payload_json"', body)
+        self.assertIn(b'name="files[0]"; filename="post.jpg"', body)
+        self.assertIn(b"\xff\xd8JPEG", body)
+        self.assertTrue(body.rstrip().endswith(f"--{boundary}--".encode()))
+
+    def test_post_card_uploads_file(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as f:
+            f.write(b"\xff\xd8x")
+            f.flush()
+            with mock.patch.object(discord, "request_multipart", return_value={"id": "m1"}) as up, \
+                 mock.patch.object(discord, "_call") as call, mock.patch.object(discord.time, "sleep"):
+                mid = discord.post_card("c1", {"content": "x"}, 2, image_path=f.name)
+        self.assertEqual(mid, "m1")
+        kwargs = up.call_args.kwargs
+        self.assertEqual(kwargs["files"][0][:2], ("files[0]", "post.jpg"))
+        self.assertEqual(json.loads(kwargs["fields"]["payload_json"]), {"content": "x"})
+        self.assertEqual(call.call_count, 4)  # 2 numbers + ✅ + ❌ reactions

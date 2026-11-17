@@ -11,7 +11,10 @@ import time
 import urllib.parse
 
 from babebasket.config import secret
-from babebasket.http import request_json
+import json
+from pathlib import Path
+
+from babebasket.http import request_json, request_multipart
 from babebasket.llm import image_labels
 
 API = "https://discord.com/api/v10"
@@ -33,7 +36,8 @@ def _emoji(e: str) -> str:
     return urllib.parse.quote(e)
 
 
-def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str]) -> dict:
+def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str],
+               has_image: bool = False) -> dict:
     labels = image_labels(draft)
     head = " · ".join(x for x in (labels["title"], labels["hero"]) if x)
     label_text = (f"**{head}**\n" if head else "") + "\n".join(f"▫️ {b}" for b in labels["points"])
@@ -65,19 +69,32 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         "url": product.get("product_url"),
         "description": description,
         "fields": fields,
-        "image": {"url": product["image_url"]} if product.get("image_url") else None,
+        "image": {"url": "attachment://post.jpg"} if has_image
+        else ({"url": product["image_url"]} if product.get("image_url") else None),
         "footer": {"text": f"draft {draft_id} · {draft.get('_model', '')}"},
         "color": 0xF6E7A1,
     }
-    return {
+    card = {
         "content": f"**Draft #{draft_id}** · {product['store']} · tap a number for the caption, then ✅ to approve or ❌ to reject",
         "embeds": [{k: v for k, v in embed.items() if v}],
         "allowed_mentions": {"parse": []},
     }
+    if has_image:
+        card["attachments"] = [{"id": 0, "filename": "post.jpg"}]
+    return card
 
 
-def post_card(channel_id: str, card: dict, n_captions: int) -> str:
-    message = _call("POST", f"/channels/{channel_id}/messages", card)
+def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | None = None) -> str:
+    if image_path:
+        message = request_multipart(
+            f"{API}/channels/{channel_id}/messages",
+            fields={"payload_json": json.dumps(card, ensure_ascii=False)},
+            files=[("files[0]", "post.jpg", Path(image_path).read_bytes(), "image/jpeg")],
+            headers={"Authorization": f"Bot {secret('DISCORD_BOT_TOKEN')}", "User-Agent": BOT_UA},
+            timeout=120,
+        )
+    else:
+        message = _call("POST", f"/channels/{channel_id}/messages", card)
     for e in NUMBERS[:n_captions] + [APPROVE, REJECT]:
         _call("PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{_emoji(e)}/@me")
         time.sleep(0.4)  # stay well inside Discord's reaction rate limit

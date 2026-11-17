@@ -17,6 +17,7 @@ import datetime as dt
 import json
 import sys
 import time
+from pathlib import Path
 
 from babebasket import config, db, llm, pricing, shortlist
 from babebasket.config import DATA
@@ -151,9 +152,12 @@ def cmd_post(cfg: dict, conn) -> None:
         raise SystemExit("Set discord.channel_id in config.toml or DISCORD_CHANNEL_ID in .env")
     for row in db.drafts(conn, "drafted"):
         payload = json.loads(row["payload"])
-        card = discord.build_card(row["id"], payload["product"], payload["quote"], payload["draft"], payload["warnings"])
+        image = payload.get("image_path")
+        image = image if image and Path(image).exists() else None
+        card = discord.build_card(row["id"], payload["product"], payload["quote"], payload["draft"], payload["warnings"],
+                                  has_image=bool(image))
         n = len(payload["draft"].get("captions", []))
-        message_id = discord.post_card(channel, card, n)
+        message_id = discord.post_card(channel, card, n, image_path=image)
         db.set_status(conn, row["id"], "pending", discord_message_id=message_id)
         print(f"card for draft #{row['id']} -> message {message_id}")
         time.sleep(1)
