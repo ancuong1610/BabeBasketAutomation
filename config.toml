@@ -12,7 +12,10 @@ categories = [
 [rossmann]
 # Category page URLs on rossmann.de (no query string). Fill in after running the probe:
 #   python3 -m babebasket.stores.rossmann probe
-categories = []
+categories = [
+"https://www.rossmann.de/de/alle-marken/isana/c/online-dachmarke_4455382",
+]
+
 
 [shortlist]
 per_day = 6              # products drafted per day
