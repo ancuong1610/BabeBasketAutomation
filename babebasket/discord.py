@@ -12,6 +12,7 @@ import urllib.parse
 
 from babebasket.config import secret
 from babebasket.http import request_json
+from babebasket.llm import image_labels
 
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
@@ -33,9 +34,10 @@ def _emoji(e: str) -> str:
 
 
 def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str]) -> dict:
-    labels = draft.get("labels", {})
-    label_text = "\n".join(f"▫️ {b}" for b in labels.get("benefits", []))
-    if labels.get("who_for"):
+    labels = image_labels(draft)
+    head = " · ".join(x for x in (labels["title"], labels["hero"]) if x)
+    label_text = (f"**{head}**\n" if head else "") + "\n".join(f"▫️ {b}" for b in labels["points"])
+    if labels["who_for"]:
         label_text += f"\n👤 {labels['who_for']}"
 
     captions = draft.get("captions", [])

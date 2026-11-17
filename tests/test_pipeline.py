@@ -62,7 +62,10 @@ class ShortlistTest(unittest.TestCase):
 GOOD_DRAFT = {
     "review_summary": "Review khen thơm.",
     "fit_for_vietnam": "Hợp tóc khô.",
-    "labels": {"benefits": ["Dưỡng tóc khô", "Tóc mượt hơn"], "who_for": "Dành cho tóc khô"},
+    "labels": {
+        "title": "Balea Haarkur Glow", "hero": "Keratin", "who_for": "Dành cho tóc khô",
+        "mode": "usage", "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"],
+    },
     "captions": [
         {"style": "everyday story", "text": "Các babe ơi {PRICE}/tuýp 200ml nha 🥰"},
         {"style": "curiosity hook", "text": "Ủa sao thơm vậy nè {PRICE}/tuýp 200ml"},
@@ -70,6 +73,37 @@ GOOD_DRAFT = {
         {"style": "direct sales", "text": "Order sốp nha {PRICE}/tuýp 200ml"},
     ],
 }
+
+
+class ImageLabelsTest(unittest.TestCase):
+    def test_image_labels_new_shape(self):
+        out = llm.image_labels(GOOD_DRAFT)
+        self.assertEqual(out, {"title": "Balea Haarkur Glow", "hero": "Keratin", "who_for": "Dành cho tóc khô",
+                               "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"], "mode": "usage"})
+
+    def test_image_labels_old_shape(self):
+        out = llm.image_labels({"labels": {"benefits": ["a", "b"], "who_for": "Dành cho x"}})
+        self.assertEqual(out, {"title": "", "hero": "", "who_for": "Dành cho x", "points": ["a", "b"], "mode": "benefits"})
+
+    def test_validate_labels_mode(self):
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "mode": "other"}}
+        self.assertIn("labels.mode must be benefits or usage", llm.validate(draft))
+
+    def test_validate_needs_two_to_three_points(self):
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "points": ["chỉ một"]}}
+        self.assertIn("labels.points must have 2–3 lines", llm.validate(draft))
+
+    def test_warnings_title_too_long(self):
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "title": "x" * 33}}
+        self.assertTrue(any(w.startswith("label too long for the image") for w in llm.warnings(draft)))
+
+    def test_card_shows_new_labels(self):
+        card = discord.build_card(1, {"brand": "Balea", "name": "Kur", "rating": 4.1, "review_count": 9, "store": "dm"},
+                                  {"shelf_eur": 2.75, "coupon_pct": 0, "cost_eur": 2.75, "sale_k": 115, "margin_k": 33},
+                                  GOOD_DRAFT, [])
+        desc = card["embeds"][0]["description"]
+        self.assertIn("Balea Haarkur Glow", desc)
+        self.assertIn("▫️ Ủ 5 phút sau khi gội", desc)
 
 
 class LlmOutputTest(unittest.TestCase):

@@ -54,8 +54,11 @@ Trả về JSON đúng cấu trúc sau:
   "review_summary": "2–3 câu tiếng Việt tóm tắt review: khen gì, chê gì",
   "fit_for_vietnam": "1–2 câu: hợp với khách Việt nào, vì sao (khí hậu, thói quen)",
   "labels": {{
-    "benefits": ["2–3 dòng công dụng ngắn, mỗi dòng tối đa 35 ký tự"],
-    "who_for": "1 dòng 'Dành cho ...', tối đa 45 ký tự"
+    "title": "tên ngắn trên ảnh, có tên hãng, tối đa 32 ký tự (vd 'Mixa Urea Cica Repair+')",
+    "hero": "thành phần/con số nổi bật, tối đa 28 ký tự (vd '10% Urea & Amino acid'), hoặc \"\"",
+    "who_for": "1 dòng 'Dành cho ...', tối đa 45 ký tự",
+    "mode": "usage hoặc benefits",
+    "points": ["2–3 dòng ngắn, mỗi dòng tối đa 35 ký tự"]
   }},
   "captions": [
     {{"style": "everyday story", "text": "..."}},
@@ -64,6 +67,9 @@ Trả về JSON đúng cấu trúc sau:
     {{"style": "direct sales", "text": "..."}}
   ]
 }}
+Chữ trên ảnh (labels): mode = "usage" cho đồ tóc, tạo kiểu, ủ, serum, mặt nạ (sản phẩm cần biết cách dùng): \
+points = cách dùng ngắn + kết quả. mode = "benefits" cho kem đánh răng, dưỡng thể, sữa tắm, kem tay, \
+thực phẩm chức năng…: points = công dụng/thành phần, không hướng dẫn cách dùng.
 Bốn caption phải thật sự khác nhau. Caption "engagement question" là bài tương tác mềm, không bán trực tiếp. \
 Mỗi caption 2–5 câu.{extra}"""
 
@@ -128,6 +134,14 @@ def validate(draft: dict) -> list[str]:
     for key in ("review_summary", "fit_for_vietnam", "labels", "captions"):
         if key not in draft:
             problems.append(f"missing {key}")
+    labels = draft.get("labels") or {}
+    if "labels" in draft:
+        if labels.get("mode") not in ("usage", "benefits"):
+            problems.append("labels.mode must be benefits or usage")
+        if not 2 <= len(labels.get("points") or []) <= 3:
+            problems.append("labels.points must have 2–3 lines")
+        if not labels.get("title"):
+            problems.append("labels.title is missing")
     captions = draft.get("captions", [])
     if len(captions) < 3:
         problems.append("fewer than 3 captions")
@@ -140,15 +154,34 @@ def validate(draft: dict) -> list[str]:
     return problems
 
 
+LABEL_LIMITS = {"title": 32, "hero": 28, "who_for": 45, "point": 35}
+
+
+def image_labels(draft: dict) -> dict:
+    """The text for the post image, also for drafts made before title/hero/points existed."""
+    labels = draft.get("labels") or {}
+    points = labels.get("points") or labels.get("benefits") or []
+    mode = labels.get("mode") if labels.get("mode") in ("usage", "benefits") else "benefits"
+    return {
+        "title": labels.get("title", ""),
+        "hero": labels.get("hero", ""),
+        "who_for": labels.get("who_for", ""),
+        "points": [str(x) for x in points],
+        "mode": mode,
+    }
+
+
 def warnings(draft: dict) -> list[str]:
     """Soft issues shown on the Discord card."""
     out = []
     for i, c in enumerate(draft.get("captions", []), 1):
         if c.get("style") != "engagement question" and "{PRICE}" not in c.get("text", ""):
             out.append(f"caption {i} has no price")
-    labels = draft.get("labels", {})
-    for line in labels.get("benefits", []) + [labels.get("who_for", "")]:
-        if len(line) > 48:
+    labels = image_labels(draft)
+    lines = [(labels[k], LABEL_LIMITS[k]) for k in ("title", "hero", "who_for")]
+    lines += [(p, LABEL_LIMITS["point"]) for p in labels["points"]]
+    for line, limit in lines:
+        if len(line) > limit:
             out.append(f"label too long for the image: {line[:30]}…")
     return out
 
