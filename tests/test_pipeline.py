@@ -495,3 +495,38 @@ class RossmannFlowTest(unittest.TestCase):
             payload = {"product": dict(ROSSMANN_PRODUCT), "draft": GOOD_DRAFT}
             path = cli.build_image(payload, Path(d) / "r.jpg", {}, fetch_bytes=lambda url: _png(), gen=lambda *a: None)
             self.assertTrue(Path(path).exists())
+
+
+class TryRossmannTest(unittest.TestCase):
+    def test_product_from_saved_page(self):
+        import tempfile
+        from pathlib import Path
+        from babebasket import cli
+
+        page = _rossmann_category_page([_tile("111"), _tile("222", name="Kur")], ["111", "222"])
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "category.html"
+            f.write_text(page)
+            self.assertEqual(cli.rossmann_product(f, "222")["name"], "Kur, 200 ml")
+            self.assertEqual(cli.rossmann_product(f, None)["product_id"], "111")
+            with self.assertRaises(SystemExit):
+                cli.rossmann_product(f, "999")
+
+
+class NoReviewsTest(unittest.TestCase):
+    def test_prompt_forbids_invented_reviews_when_none(self):
+        content = llm.build_messages(ROSSMANN_PRODUCT, {"claims": [], "breadcrumbs": [], "description": ""}, [])[1]["content"]
+        self.assertIn(llm.NO_REVIEWS_NOTE.split("{rating}")[0].strip(), content)
+        self.assertIn(llm.NO_DETAILS_NOTE.strip(), content)
+        self.assertIn("4.6/5 (40 lượt đánh giá)", content)
+
+    def test_prompt_unchanged_when_reviews_exist(self):
+        review = {"rating": 5, "title": "Top", "text": "Super", "reviewer": "A", "incentivized": False}
+        detail = {"claims": ["pflegt"], "breadcrumbs": ["Haare"], "description": "Eine Kur"}
+        content = llm.build_messages(ROSSMANN_PRODUCT, detail, [review])[1]["content"]
+        self.assertNotIn(llm.NO_REVIEWS_NOTE.split("{rating}")[0].strip(), content)
+        self.assertNotIn(llm.NO_DETAILS_NOTE.strip(), content)
+
+    def test_card_warns_when_drafted_without_reviews(self):
+        self.assertIn(llm.NO_REVIEWS_WARNING, llm.warnings(GOOD_DRAFT, had_reviews=False))
+        self.assertNotIn(llm.NO_REVIEWS_WARNING, llm.warnings(GOOD_DRAFT))

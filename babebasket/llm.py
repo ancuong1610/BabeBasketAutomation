@@ -79,6 +79,18 @@ HANOI_SEASON = {
     11: "cuối thu, hanh khô, se lạnh", 12: "đông, lạnh khô",
 }
 
+NO_REVIEWS_NOTE = (
+    "\nKHÔNG có review nào được cung cấp. review_summary phải ghi đúng: \"Chưa có review chi tiết, "
+    "chỉ có điểm {rating}.\" TUYỆT ĐỐI không bịa người mua khen/chê gì, không viết \"khách khen\", "
+    "\"review bên Đức khen\" trong caption."
+)
+NO_DETAILS_NOTE = (
+    "\nKHÔNG có mô tả hay công dụng chính thức. Chỉ dùng những gì suy ra chắc chắn từ tên sản phẩm và loại sản phẩm; "
+    "không bịa thành phần, con số hay công dụng đặc biệt (vd không tự suy 'tạo màu tóc' từ chữ 'Black'). "
+    "hero để \"\" nếu không chắc."
+)
+NO_REVIEWS_WARNING = "no reviews or description given: check the summary and claims"
+
 SUPPLEMENT_NOTE = (
     "\nĐây là thực phẩm chức năng: chỉ dùng công dụng nhà sản xuất công bố ở trên, "
     "không hứa hẹn tác dụng điều trị."
@@ -107,6 +119,10 @@ def build_messages(product: dict, detail: dict, reviews: list[dict]) -> list[dic
         if not r.get("incentivized")
     ][:12]
     extra = SUPPLEMENT_NOTE if is_supplement(detail, product) else ""
+    if not review_lines:
+        extra += NO_REVIEWS_NOTE.replace("{rating}", f"{product['rating']:.1f}/5 ({product['review_count']} lượt đánh giá)")
+    if not (detail.get("description") or detail.get("claims") or detail.get("features")):
+        extra += NO_DETAILS_NOTE
     today = dt.date.today()
     user = USER_TEMPLATE.format(
         today=today.strftime("%d/%m/%Y"),
@@ -167,9 +183,9 @@ def image_labels(draft: dict) -> dict:
     }
 
 
-def warnings(draft: dict) -> list[str]:
+def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
     """Soft issues shown on the Discord card."""
-    out = []
+    out = [] if had_reviews else [NO_REVIEWS_WARNING]
     for i, c in enumerate(draft.get("captions", []), 1):
         if c.get("style") != "engagement question" and "{PRICE}" not in c.get("text", ""):
             out.append(f"caption {i} has no price")

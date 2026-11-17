@@ -8,6 +8,7 @@
     python3 -m babebasket daily             # scrape + draft + post
     python3 -m babebasket try dm 3050111    # one product end to end, printed (no Discord)
     python3 -m babebasket try dm 3050111 --image   # ... and render the post image
+    python3 -m babebasket try rossmann first --image  # first product of a saved Rossmann page
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def make_draft(product: dict, cfg: dict) -> dict:
     detail, reviews = enrich(product)
     quote = pricing.quote(product["price_eur"], product["store"], cfg)
     draft = llm.draft_post(product, detail, reviews, cfg)
-    warnings = llm.warnings(draft)  # before the {PRICE} placeholder is filled in
+    warnings = llm.warnings(draft, had_reviews=bool(reviews))  # before the {PRICE} placeholder is filled in
     draft = llm.fill_price(draft, quote["price_text"])
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
 
@@ -197,10 +198,31 @@ def cmd_check(cfg: dict, conn) -> None:
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
 
 
-def cmd_try(cfg: dict, store: str, product_id: str, image: bool = False) -> None:
+def rossmann_product(page_path, ean: str | None) -> dict:
+    """A product row from a Rossmann category page saved to disk (no network)."""
+    rows = rossmann.parse_page(Path(page_path).read_text(), db.now())
+    if not rows:
+        raise SystemExit(f"no products found in {page_path}")
+    if ean is None:
+        return rows[0]
+    for row in rows:
+        if row["product_id"] == ean:
+            return row
+    raise SystemExit(f"EAN {ean} not in {page_path}; found: {', '.join(r['product_id'] for r in rows)}")
+
+
+def cmd_try(cfg: dict, store: str, product_id: str, image: bool = False, page: str | None = None) -> None:
     """One product end to end, printed. Needs OPENROUTER_API_KEY; does not touch Discord or the DB."""
+    if store == "rossmann":
+        product = rossmann_product(page or "rossmann_probe/category.html", None if product_id == "first" else product_id)
+        payload = make_draft(product, cfg)
+        print(json.dumps({k: payload[k] for k in ("product", "quote", "draft", "warnings")}, ensure_ascii=False, indent=1))
+        if image:
+            path = build_image(payload, DATA / "images" / f"try-{product['product_id']}.jpg", cfg)
+            print(f"image ({payload.get('image_source', 'none')}): {path}")
+        return
     if store != "dm":
-        raise SystemExit("try supports dm for now")
+        raise SystemExit("try supports dm and rossmann")
     from babebasket.http import request_json
 
     raw = request_json(dm.DETAIL_URL.format(dan=product_id))
@@ -240,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("store")
     t.add_argument("product_id")
     t.add_argument("--image", action="store_true", help="also render the post image to data/images/")
+    t.add_argument("--page", help="rossmann: saved category page (default rossmann_probe/category.html)")
     args = ap.parse_args(argv)
 
     cfg = config.load()
@@ -250,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
                       {"content": args.text.replace("\\n", "\n")[:1900], "allowed_mentions": {"parse": []}})
         return 0
     if args.cmd == "try":
-        cmd_try(cfg, args.store, args.product_id, args.image)
+        cmd_try(cfg, args.store, args.product_id, args.image, args.page)
         return 0
     conn = db.connect()
     if args.cmd == "scrape":
