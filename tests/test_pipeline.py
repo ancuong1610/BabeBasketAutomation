@@ -85,13 +85,24 @@ class ImageLabelsTest(unittest.TestCase):
         out = llm.image_labels({"labels": {"benefits": ["a", "b"], "who_for": "Dành cho x"}})
         self.assertEqual(out, {"title": "", "hero": "", "who_for": "Dành cho x", "points": ["a", "b"], "mode": "benefits"})
 
-    def test_validate_labels_mode(self):
+    def test_bad_mode_is_a_warning_not_a_lost_draft(self):
         draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "mode": "other"}}
-        self.assertIn("labels.mode must be benefits or usage", llm.validate(draft))
+        self.assertEqual(llm.validate(draft), [])
+        self.assertIn("labels.mode must be benefits or usage", llm.warnings(draft))
+        self.assertEqual(llm.image_labels(draft)["mode"], "benefits")
 
-    def test_validate_needs_two_to_three_points(self):
-        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "points": ["chỉ một"]}}
-        self.assertIn("labels.points must have 2–3 lines", llm.validate(draft))
+    def test_point_count_is_a_warning_and_clamped(self):
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "points": ["a", "b", "c", "d"]}}
+        self.assertEqual(llm.validate(draft), [])
+        self.assertIn("labels.points must have 2–3 lines", llm.warnings(draft))
+        self.assertEqual(llm.image_labels(draft)["points"], ["a", "b", "c"])
+
+    def test_null_fields_do_not_crash(self):
+        draft = {**GOOD_DRAFT, "labels": {"title": None, "hero": None, "who_for": None, "mode": None, "points": None}}
+        labels = llm.image_labels(draft)
+        self.assertEqual((labels["title"], labels["hero"], labels["who_for"], labels["points"]), ("", "", "", []))
+        self.assertIsInstance(llm.warnings(draft), list)
+        self.assertEqual(llm.validate(draft), [])
 
     def test_warnings_title_too_long(self):
         draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "title": "x" * 33}}
@@ -379,3 +390,61 @@ class DiscordImageTest(unittest.TestCase):
         self.assertEqual(kwargs["files"][0][:2], ("files[0]", "post.jpg"))
         self.assertEqual(json.loads(kwargs["fields"]["payload_json"]), {"content": "x"})
         self.assertEqual(call.call_count, 4)  # 2 numbers + ✅ + ❌ reactions
+
+
+class PostResilienceTest(unittest.TestCase):
+    def _payload(self, image_path):
+        return {"product": CARD_PRODUCT, "quote": CARD_QUOTE, "draft": GOOD_DRAFT, "warnings": [], "image_path": image_path}
+
+    def test_upload_failure_falls_back_to_card_without_image(self):
+        import tempfile
+        from babebasket import cli
+
+        conn = db.connect(":memory:")
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as f:
+            draft_id = db.add_draft(conn, "dm", "1", self._payload(f.name))
+            calls = []
+
+            def post_card(channel, card, n, image_path=None):
+                calls.append(image_path)
+                if image_path:
+                    raise RuntimeError("HTTP 400")
+                return "m2"
+
+            with mock.patch.object(discord, "post_card", side_effect=post_card), mock.patch.object(cli.time, "sleep"):
+                cli.cmd_post({"discord": {"channel_id": "c"}}, conn)
+        self.assertEqual(calls, [f.name, None])
+        row = conn.execute("SELECT status, discord_message_id FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        self.assertEqual((row["status"], row["discord_message_id"]), ("pending", "m2"))
+
+    def test_one_failing_draft_does_not_stop_the_rest(self):
+        from babebasket import cli
+
+        conn = db.connect(":memory:")
+        db.add_draft(conn, "dm", "1", self._payload(None))
+        second = db.add_draft(conn, "dm", "2", self._payload(None))
+        results = iter([RuntimeError("HTTP 500"), "m2"])
+
+        def post_card(channel, card, n, image_path=None):
+            r = next(results)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        with mock.patch.object(discord, "post_card", side_effect=post_card), mock.patch.object(cli.time, "sleep"):
+            cli.cmd_post({"discord": {"channel_id": "c"}}, conn)
+        row = conn.execute("SELECT status FROM drafts WHERE id = ?", (second,)).fetchone()
+        self.assertEqual(row["status"], "pending")
+
+    def test_multipart_retries_429(self):
+        import io
+        import urllib.error
+        from babebasket import http
+
+        err = urllib.error.HTTPError("u", 429, "rate", {"Retry-After": "0.01"}, io.BytesIO(b"{}"))
+        ok = mock.MagicMock()
+        ok.__enter__.return_value.read.return_value = b'{"id": "m1"}'
+        with mock.patch.object(http.urllib.request, "urlopen", side_effect=[err, ok]) as op, \
+             mock.patch.object(http.time, "sleep"):
+            out = http.request_multipart("https://x", fields={"a": "1"}, files=[])
+        self.assertEqual((out, op.call_count), ({"id": "m1"}, 2))

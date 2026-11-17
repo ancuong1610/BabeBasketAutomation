@@ -75,16 +75,27 @@ def encode_multipart(fields: dict[str, str], files: list[tuple[str, str, bytes, 
 
 
 def request_multipart(url: str, *, fields: dict[str, str], files: list[tuple[str, str, bytes, str]],
-                      headers: dict | None = None, timeout: float = 60):
-    """POST a multipart form and decode the JSON reply (no retries: uploads are not idempotent)."""
+                      headers: dict | None = None, timeout: float = 60, retries: int = 3):
+    """POST a multipart form and decode the JSON reply. Retries only HTTP 429 (nothing was created)."""
     body, ctype = encode_multipart(fields, files)
     all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Content-Type": ctype}
     all_headers.update(headers or {})
-    req = urllib.request.Request(url, data=body, headers=all_headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
-            return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as err:
-        detail = err.read()[:500].decode(errors="replace")
-        raise RuntimeError(f"HTTP {err.code} for POST {url.split('?')[0]}: {detail}") from err
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, data=body, headers=all_headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as err:
+            # 429 means nothing was created, so it is safe to send again; other errors are not retried
+            if err.code == 429 and attempt < retries:
+                try:
+                    wait = float(err.headers.get("Retry-After") or 5)
+                except ValueError:
+                    wait = 5.0
+                print(f"429 from {url.split('?')[0]}, retrying in {wait:.0f}s", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            detail = err.read()[:500].decode(errors="replace")
+            raise RuntimeError(f"HTTP {err.code} for POST {url.split('?')[0]}: {detail}") from err
+    raise RuntimeError("unreachable")

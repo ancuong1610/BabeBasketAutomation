@@ -152,12 +152,25 @@ def cmd_post(cfg: dict, conn) -> None:
         raise SystemExit("Set discord.channel_id in config.toml or DISCORD_CHANNEL_ID in .env")
     for row in db.drafts(conn, "drafted"):
         payload = json.loads(row["payload"])
+        n = len(payload["draft"].get("captions", []))
         image = payload.get("image_path")
         image = image if image and Path(image).exists() else None
-        card = discord.build_card(row["id"], payload["product"], payload["quote"], payload["draft"], payload["warnings"],
-                                  has_image=bool(image))
-        n = len(payload["draft"].get("captions", []))
-        message_id = discord.post_card(channel, card, n, image_path=image)
+
+        def card(with_image: bool) -> dict:
+            return discord.build_card(row["id"], payload["product"], payload["quote"], payload["draft"],
+                                      payload["warnings"], has_image=with_image)
+
+        try:
+            try:
+                message_id = discord.post_card(channel, card(bool(image)), n, image_path=image)
+            except Exception as err:
+                if not image:
+                    raise
+                print(f"! image upload failed for draft #{row['id']}, sending card without it: {err}", file=sys.stderr)
+                message_id = discord.post_card(channel, card(False), n)
+        except Exception as err:  # one bad card must not stop the rest of the day's drafts
+            print(f"! card for draft #{row['id']} failed: {err}", file=sys.stderr)
+            continue
         db.set_status(conn, row["id"], "pending", discord_message_id=message_id)
         print(f"card for draft #{row['id']} -> message {message_id}")
         time.sleep(1)

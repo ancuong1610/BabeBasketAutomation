@@ -20,7 +20,7 @@ RED = (224, 38, 43)
 WHITE = (255, 255, 255)
 RADIUS = 18
 PAD_X, PAD_Y = 18, 12
-MAX_TEXT_W = 420        # right-column boxes
+MAX_TEXT_W = 390        # right-column boxes: stay right of PRODUCT_BOX
 TITLE_MAX_W = 900
 POINTS_MAX_W = 700
 MARGIN = 48
@@ -32,7 +32,7 @@ FONT_TITLE = ROOT / "assets" / "fonts" / "BeVietnamPro-ExtraBold.ttf"
 LOGO = ROOT / "assets" / "logo.jpg"
 # Where the product sits: centre x, top, max width, max height. Left of centre so the
 # right column and the bottom row stay free for text (same brief as the Gemini prompt).
-PRODUCT_BOX = (400, 220, 460, 860)
+PRODUCT_BOX = (380, 220, 440, 860)
 
 
 @lru_cache(maxsize=None)

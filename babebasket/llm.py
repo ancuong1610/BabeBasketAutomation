@@ -134,14 +134,6 @@ def validate(draft: dict) -> list[str]:
     for key in ("review_summary", "fit_for_vietnam", "labels", "captions"):
         if key not in draft:
             problems.append(f"missing {key}")
-    labels = draft.get("labels") or {}
-    if "labels" in draft:
-        if labels.get("mode") not in ("usage", "benefits"):
-            problems.append("labels.mode must be benefits or usage")
-        if not 2 <= len(labels.get("points") or []) <= 3:
-            problems.append("labels.points must have 2–3 lines")
-        if not labels.get("title"):
-            problems.append("labels.title is missing")
     captions = draft.get("captions", [])
     if len(captions) < 3:
         problems.append("fewer than 3 captions")
@@ -160,13 +152,17 @@ LABEL_LIMITS = {"title": 32, "hero": 28, "who_for": 45, "point": 35}
 def image_labels(draft: dict) -> dict:
     """The text for the post image, also for drafts made before title/hero/points existed."""
     labels = draft.get("labels") or {}
+    if not isinstance(labels, dict):
+        labels = {}
     points = labels.get("points") or labels.get("benefits") or []
+    if not isinstance(points, list):
+        points = [points]
     mode = labels.get("mode") if labels.get("mode") in ("usage", "benefits") else "benefits"
     return {
-        "title": labels.get("title", ""),
-        "hero": labels.get("hero", ""),
-        "who_for": labels.get("who_for", ""),
-        "points": [str(x) for x in points],
+        "title": str(labels.get("title") or ""),
+        "hero": str(labels.get("hero") or ""),
+        "who_for": str(labels.get("who_for") or ""),
+        "points": [str(x) for x in points if x][:3],
         "mode": mode,
     }
 
@@ -177,6 +173,14 @@ def warnings(draft: dict) -> list[str]:
     for i, c in enumerate(draft.get("captions", []), 1):
         if c.get("style") != "engagement question" and "{PRICE}" not in c.get("text", ""):
             out.append(f"caption {i} has no price")
+    raw = draft.get("labels") if isinstance(draft.get("labels"), dict) else {}
+    if raw.get("mode") not in ("usage", "benefits"):
+        out.append("labels.mode must be benefits or usage")
+    raw_points = raw.get("points") or raw.get("benefits") or []
+    if not 2 <= len(raw_points if isinstance(raw_points, list) else [raw_points]) <= 3:
+        out.append("labels.points must have 2–3 lines")
+    if not raw.get("title"):
+        out.append("image has no title")
     labels = image_labels(draft)
     lines = [(labels[k], LABEL_LIMITS[k]) for k in ("title", "hero", "who_for")]
     lines += [(p, LABEL_LIMITS["point"]) for p in labels["points"]]

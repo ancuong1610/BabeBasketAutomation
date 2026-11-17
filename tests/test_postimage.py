@@ -75,6 +75,15 @@ class RenderTest(unittest.TestCase):
                 self.assertFalse(overlap, (a, b))
 
 
+class ProductAreaTest(unittest.TestCase):
+    def test_right_column_stays_clear_of_fallback_product(self):
+        long = {**LABELS, "hero": "Glycolic Acid & Keratin & Niacinamid", "who_for": "Dành cho tóc xỉn màu, xơ rối và thiếu bóng tự nhiên"}
+        layout = postimage.last_layout(postimage.render(_scene(), long))
+        cx, _, bw, _ = postimage.PRODUCT_BOX
+        for key in ("hero", "who_for"):
+            self.assertGreaterEqual(layout[key][0], cx + bw // 2, key)
+
+
 class FallbackTest(unittest.TestCase):
     def test_fallback_scene_size(self):
         img = postimage.fallback_scene(_packshot())
