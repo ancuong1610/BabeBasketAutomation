@@ -4,7 +4,7 @@ Daily pipeline: scrape German drugstores → shortlist → LLM drafts in the sho
 Discord approval cards → (next) publish to Instagram and Threads.
 Nothing is published without an approval tap in Discord.
 
-Python 3.11+ standard library only: nothing to `pip install`.
+Python 3.11+; install runtime deps with `pip install -r requirements.txt`. The browser downloads its Chromium runtime on first launch.
 
 ## Commands
 
