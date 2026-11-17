@@ -42,3 +42,9 @@ temperature = 0.8
 [discord]
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
 owner_user_ids = ["420952578491285515"]      # only these users' reactions count; empty = any non-bot user
+
+[image]
+# Gemini image model on OpenRouter that puts the packshot in a hand in a drugstore aisle.
+# Switch to "google/gemini-3-pro-image" for higher quality (costs more). enabled = false -> plain background.
+model = "google/gemini-3.1-flash-image"
+enabled = true
