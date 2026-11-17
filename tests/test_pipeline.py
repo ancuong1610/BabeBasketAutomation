@@ -448,3 +448,50 @@ class PostResilienceTest(unittest.TestCase):
              mock.patch.object(http.time, "sleep"):
             out = http.request_multipart("https://x", fields={"a": "1"}, files=[])
         self.assertEqual((out, op.call_count), ({"id": "m1"}, 2))
+
+
+class StoreBadgeTest(unittest.TestCase):
+    def _card(self, store):
+        return discord.build_card(5, {**CARD_PRODUCT, "store": store}, CARD_QUOTE, GOOD_DRAFT, [])
+
+    def test_dm_badge(self):
+        card = self._card("dm")
+        self.assertIn("🟦 DM", card["content"])
+        self.assertIn({"name": "Nguồn", "value": "🟦 DM", "inline": True}, card["embeds"][0]["fields"])
+
+    def test_rossmann_badge(self):
+        card = self._card("rossmann")
+        self.assertIn("🟥 ROSSMANN", card["content"])
+        self.assertIn({"name": "Nguồn", "value": "🟥 ROSSMANN", "inline": True}, card["embeds"][0]["fields"])
+        self.assertEqual(card["embeds"][0]["color"], discord.STORE_COLORS["rossmann"])
+
+
+ROSSMANN_PRODUCT = {
+    "store": "rossmann", "product_id": "4262569110125", "gtin": "4262569110125", "brand": "Haarwald",
+    "name": "Styling Powder, 20 g", "price_eur": 9.99, "unit_price": "1 kg = 499,50 €", "rating": 4.6,
+    "review_count": 40, "categories": "", "image_url": "https://www.rossmann.de/media-neu/x.png",
+    "product_url": "https://www.rossmann.de/de/p/4262569110125",
+}
+
+
+class RossmannFlowTest(unittest.TestCase):
+    def test_prompt_builds_without_dm_details(self):
+        from babebasket import cli
+
+        detail, reviews = cli.enrich(dict(ROSSMANN_PRODUCT))
+        messages = llm.build_messages(ROSSMANN_PRODUCT, detail, reviews)
+        self.assertIn("Haarwald", messages[1]["content"])
+        self.assertIn("rossmann", messages[1]["content"])
+
+    def test_card_and_image_for_rossmann(self):
+        import tempfile
+        from pathlib import Path
+        from babebasket import cli
+
+        quote = pricing.quote(ROSSMANN_PRODUCT["price_eur"], "rossmann", CFG)
+        card = discord.build_card(9, ROSSMANN_PRODUCT, quote, GOOD_DRAFT, [], has_image=True)
+        self.assertIn("🟥 ROSSMANN", card["content"])
+        with tempfile.TemporaryDirectory() as d:
+            payload = {"product": dict(ROSSMANN_PRODUCT), "draft": GOOD_DRAFT}
+            path = cli.build_image(payload, Path(d) / "r.jpg", {}, fetch_bytes=lambda url: _png(), gen=lambda *a: None)
+            self.assertTrue(Path(path).exists())

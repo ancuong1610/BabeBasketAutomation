@@ -20,6 +20,9 @@ from babebasket.llm import image_labels
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
+# Owner-only marker: which store the product comes from (never part of the post itself)
+STORE_BADGES = {"dm": "🟦 DM", "rossmann": "🟥 ROSSMANN"}
+STORE_COLORS = {"dm": 0x1F5FAD, "rossmann": 0xC8102E}
 BOT_UA = "DiscordBot (https://localhost, 0.1)"  # format Discord requires
 
 
@@ -56,7 +59,9 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     )[:4096]
 
     coupon = f" − {quote['coupon_pct']:g}% coupon" if quote["coupon_pct"] else ""
+    badge = STORE_BADGES.get(product["store"], product["store"].upper())
     fields = [
+        {"name": "Nguồn", "value": badge, "inline": True},
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
         {"name": "Sale price", "value": f"{quote['sale_k']}🐠 (margin ~{quote['margin_k']}🐠)", "inline": True},
         {"name": "Rating", "value": f"⭐ {product['rating']:.2f} · {product['review_count']} reviews", "inline": True},
@@ -72,10 +77,10 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         "image": {"url": "attachment://post.jpg"} if has_image
         else ({"url": product["image_url"]} if product.get("image_url") else None),
         "footer": {"text": f"draft {draft_id} · {draft.get('_model', '')}"},
-        "color": 0xF6E7A1,
+        "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
     }
     card = {
-        "content": f"**Draft #{draft_id}** · {product['store']} · tap a number for the caption, then ✅ to approve or ❌ to reject",
+        "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject",
         "embeds": [{k: v for k, v in embed.items() if v}],
         "allowed_mentions": {"parse": []},
     }
