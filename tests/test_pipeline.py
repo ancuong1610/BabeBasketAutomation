@@ -1,7 +1,9 @@
+import json
 import unittest
 from unittest import mock
 
 from babebasket import db, discord, llm, pricing, shortlist
+from babebasket.config import ROOT
 from babebasket.stores import rossmann
 
 CFG = {
@@ -161,3 +163,60 @@ class RossmannTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _rossmann_category_page(products, grid_eans, split_at=None):
+    """Minimal Next.js category page: grid tiles + flight data, like rossmann.de (Nov 2026)."""
+    flight = 'fe:["$","div",null,{"children":[' + ",".join(
+        json.dumps(["$", "$L100", None, {"product": p}]) for p in products
+    ) + "]}]\n"
+    chunks = [flight] if split_at is None else [flight[:split_at], flight[split_at:]]
+    scripts = "".join(f"<script>self.__next_f.push({json.dumps([1, c])})</script>" for c in chunks)
+    tiles = "".join(f'<div class="shadow-multi" data-item-enabled="true" data-item-ean="{e}"></div>' for e in grid_eans)
+    return f'<div data-testid="search-products">{tiles}</div>{scripts}'
+
+
+def _tile(ean, name="Haarkur", count=12, average=4.6, size="200 ml"):
+    return {
+        "ean": ean, "dan": "1", "productUrl": f"https://www.rossmann.de/de/x/p/{ean}", "name": name,
+        "brandName": "Isana", "size": {"sizeText": size} if size else "$undefined",
+        "price": {"retail": {"amount": 1.95, "currency": "EUR"}, "strikethrough": "$undefined",
+                  "basePriceText": "(1 L = 9,75 €)"},
+        "image": {"url": f"https://img/{ean}.png"}, "rating": {"average": average, "count": count},
+    }
+
+
+class RossmannNextPageTest(unittest.TestCase):
+    def test_grid_tiles(self):
+        page = _rossmann_category_page([_tile("111"), _tile("222", count=0, size=None)], ["111", "222"])
+        rows = rossmann.parse_page(page, "T")
+        self.assertEqual([r["product_id"] for r in rows], ["111", "222"])
+        a, b = rows
+        self.assertEqual((a["brand"], a["name"], a["price_eur"], a["unit_price"]), ("Isana", "Haarkur, 200 ml", 1.95, "1 L = 9,75 €"))
+        self.assertEqual((a["rating"], a["review_count"], a["gtin"]), (4.6, 12, "111"))
+        self.assertEqual((a["image_url"], a["product_url"]), ("https://img/111.png", "https://www.rossmann.de/de/x/p/111"))
+        self.assertEqual((b["name"], b["rating"], b["review_count"]), ("Haarkur", None, 0))
+
+    def test_only_grid_products_in_grid_order(self):
+        page = _rossmann_category_page([_tile("111"), _tile("999"), _tile("222")], ["222", "111"])
+        self.assertEqual([r["product_id"] for r in rossmann.parse_page(page)], ["222", "111"])
+
+    def test_product_split_across_flight_chunks(self):
+        page = _rossmann_category_page([_tile("111")], ["111"], split_at=60)
+        self.assertEqual(len(rossmann.parse_page(page)), 1)
+
+    def test_product_page_json_ld_gets_gtin_from_sku(self):
+        page = ('<script type="application/ld+json">{"@type":"Product","name":"Badekristalle","sku":"4008233129761",'
+                '"brand":{"name":"Kneipp"},"offers":{"price":0.95}}</script>')
+        (r,) = rossmann.parse_page(page)
+        self.assertEqual((r["gtin"], r["price_eur"]), ("4008233129761", 0.95))
+
+    @unittest.skipUnless((ROOT / "rossmann_probe" / "category.html").exists(), "no saved probe page")
+    def test_saved_probe_category_page(self):
+        page = (ROOT / "rossmann_probe" / "category.html").read_text()
+        if "Client Challenge" in page[:5000]:
+            self.skipTest("saved page is the challenge page")
+        rows = rossmann.parse_page(page)
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertTrue(r["gtin"].isdigit() and r["name"] and r["price_eur"] and r["product_url"].startswith(rossmann.SITE))

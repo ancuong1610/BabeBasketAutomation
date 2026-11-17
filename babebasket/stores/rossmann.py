@@ -6,9 +6,12 @@ without fetching rossmann.de from the development session. Run it yourself:
     python3 -m babebasket.stores.rossmann probe                 # once: find categories, save sample pages
     python3 -m babebasket.stores.rossmann probe --keyword haar  # narrow the category search
 
-The probe saves what it fetched to rossmann_probe/ so the parser can be fitted
-to the real page structure. Until then `parse_page` reads schema.org JSON-LD,
-which may or may not be present.
+Page structure (fitted to real pages saved by the probe, 2026-11-17):
+- Category pages are Next.js. Each grid tile is <div data-item-ean=...>, rendered
+  from a "product" object in the flight data (self.__next_f) that carries price,
+  base price, size, image and rating {average, count}. `parse_page` reads those.
+- Product pages carry one schema.org Product in JSON-LD (no rating; reviews load
+  later from Bazaarvoice). `parse_page` falls back to that.
 
 robots.txt rules this code follows (User-agent: *): no /de/search/, no query
 strings except ?pageIndex=N on category pages.
@@ -134,7 +137,77 @@ def _num(value) -> float | None:
         return None
 
 
+def _next_payload(page: str) -> str:
+    """Join the Next.js flight data (self.__next_f.push([1, "..."])) into one string."""
+    parts = []
+    for m in re.finditer(r"self\.__next_f\.push\((\[1,.*?\])\)</script>", page, re.S):
+        try:
+            arr = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        if len(arr) > 1 and isinstance(arr[1], str):
+            parts.append(arr[1])
+    return "".join(parts)
+
+
+def _tile_products(page: str) -> dict[str, dict]:
+    """Product objects behind the category tiles, keyed by EAN.
+
+    Each tile is rendered from {"product": {"ean", "name", "brandName", "productUrl",
+    "size", "price": {"retail": {"amount"}, "basePriceText", ...}, "image", "rating": {"average", "count"}}}.
+    """
+    payload = _next_payload(page)
+    decoder = json.JSONDecoder()
+    found: dict[str, dict] = {}
+    for m in re.finditer(r'"product":\s*(\{)\s*"ean":', payload):
+        try:
+            obj, _ = decoder.raw_decode(payload, m.start(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj.get("price"), dict) and obj.get("ean"):
+            found.setdefault(str(obj["ean"]), obj)
+    return found
+
+
+def _defined(value):
+    return None if value == "$undefined" else value
+
+
+def _row_from_tile(o: dict, scraped_at: str) -> dict:
+    price = o.get("price") or {}
+    rating = _defined(o.get("rating")) or {}
+    size = _defined(o.get("size")) or {}
+    image = _defined(o.get("image")) or {}
+    count = int(_num(rating.get("count")) or 0)
+    name = o.get("name", "")
+    size_text = _defined(size.get("sizeText"))
+    return {
+        "store": "rossmann",
+        "product_id": str(o["ean"]),
+        "gtin": str(o["ean"]),
+        "brand": o.get("brandName", ""),
+        "name": f"{name}, {size_text}" if size_text else name,
+        "price_eur": _num(((price.get("retail") or {}).get("amount"))),
+        "unit_price": (_defined(price.get("basePriceText")) or "").strip("() "),
+        "rating": _num(rating.get("average")) if count else None,
+        "review_count": count,
+        "categories": "",
+        "image_url": image.get("url", "") if isinstance(image, dict) else "",
+        "product_url": urllib.parse.urljoin(SITE, o.get("productUrl", "")),
+        "scraped_at": scraped_at,
+    }
+
+
 def parse_page(page: str, scraped_at: str = "") -> list[dict]:
+    """Category page: products from the grid tiles. Product page: the schema.org Product."""
+    tiles = _tile_products(page)
+    grid_eans = list(dict.fromkeys(re.findall(r'<div [^>]*data-item-ean="(\d+)"', page)))
+    if tiles and grid_eans:
+        return [_row_from_tile(tiles[e], scraped_at) for e in grid_eans if e in tiles]
+    return _parse_ld_json(page, scraped_at)
+
+
+def _parse_ld_json(page: str, scraped_at: str = "") -> list[dict]:
     rows = []
     for block in _ld_json_blocks(page):
         for p in _walk_products(block):
@@ -149,7 +222,7 @@ def parse_page(page: str, scraped_at: str = "") -> list[dict]:
                 {
                     "store": "rossmann",
                     "product_id": str(p.get("sku") or p.get("productID") or p.get("gtin13") or url),
-                    "gtin": str(p.get("gtin13") or p.get("gtin") or ""),
+                    "gtin": str(p.get("gtin13") or p.get("gtin") or (p.get("sku") if str(p.get("sku", "")).isdigit() else "")),
                     "brand": brand.get("name", "") if isinstance(brand, dict) else str(brand),
                     "name": p.get("name", ""),
                     "price_eur": _num(offers.get("price") or offers.get("lowPrice")),
