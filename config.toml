@@ -6,6 +6,7 @@ categories = [
     "Haarkur & Haarmaske", "Leave-In", "Haaröl",
     "Handcreme & Handmasken", "Bodylotion & Hautcreme",
     "Vitamine", "Weihnachtliche Geschenksets",
+    "Shampoo", "Haarstyling", "Duschgel", "Zahnpasta",   # verified 2026-11-17: 302 / 226 / 183 / 151 products
 ]
 
 [rossmann]

@@ -169,6 +169,10 @@ def _tile_products(page: str) -> dict[str, dict]:
     return found
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text).lower()
+
+
 def _defined(value):
     return None if value == "$undefined" else value
 
@@ -186,7 +190,7 @@ def _row_from_tile(o: dict, scraped_at: str) -> dict:
         "product_id": str(o["ean"]),
         "gtin": str(o["ean"]),
         "brand": o.get("brandName", ""),
-        "name": f"{name}, {size_text}" if size_text else name,
+        "name": name if not size_text or _squash(size_text) in _squash(name) else f"{name}, {size_text}",
         "price_eur": _num(((price.get("retail") or {}).get("amount"))),
         "unit_price": (_defined(price.get("basePriceText")) or "").strip("() "),
         "rating": _num(rating.get("average")) if count else None,

@@ -530,3 +530,13 @@ class NoReviewsTest(unittest.TestCase):
     def test_card_warns_when_drafted_without_reviews(self):
         self.assertIn(llm.NO_REVIEWS_WARNING, llm.warnings(GOOD_DRAFT, had_reviews=False))
         self.assertNotIn(llm.NO_REVIEWS_WARNING, llm.warnings(GOOD_DRAFT))
+
+
+class RossmannNameSizeTest(unittest.TestCase):
+    def test_size_not_repeated_when_name_has_it(self):
+        page = _rossmann_category_page([_tile("111", name="Professional Plex Shampoo, 250ml", size="250 ml")], ["111"])
+        self.assertEqual(rossmann.parse_page(page)[0]["name"], "Professional Plex Shampoo, 250ml")
+
+    def test_size_added_when_missing(self):
+        page = _rossmann_category_page([_tile("111", name="Plex Maske", size="125 ml")], ["111"])
+        self.assertEqual(rossmann.parse_page(page)[0]["name"], "Plex Maske, 125 ml")
