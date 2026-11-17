@@ -59,6 +59,43 @@ def fetch_text(url: str) -> str:
         raw = gzip.decompress(raw)
     return raw.decode("utf-8", errors="replace")
 
+_BROWSER = None
+
+def _get_browser():
+    global _BROWSER
+    if _BROWSER is None:
+        from cloakbrowser import launch
+        _BROWSER = launch(headless=False, humanize=True)
+    return _BROWSER
+
+def _close_browser():
+    global _BROWSER
+    if _BROWSER is not None:
+        try:
+            _BROWSER.close()
+        except Exception:
+            pass
+        _BROWSER = None
+
+def fetch_html(url: str) -> str:
+    """Like fetch_text, but runs a real browser so the JS challenge clears."""
+    if not allowed(url):
+        raise ValueError(f"not allowed by robots.txt: {url}")
+    page = _get_browser().new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        # Rossmann's block page has title "Client Challenge"; wait for it to clear.
+        try:
+            page.wait_for_function(
+                "() => document.title !== 'Client Challenge'",
+                timeout=15_000,
+            )
+        except Exception:
+            pass  # fall through; caller checks content
+        page.wait_for_timeout(1500)  # let client-side rendering settle
+        return page.content()
+    finally:
+        page.close()
 
 def _sitemap_locs(xml: str) -> list[str]:
     return [html.unescape(u) for u in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml)]
@@ -131,15 +168,23 @@ def parse_page(page: str, scraped_at: str = "") -> list[dict]:
 def crawl_category(url: str, delay: float = DELAY_SECONDS) -> list[dict]:
     scraped_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     rows: dict[str, dict] = {}
-    for page_index in range(MAX_PAGES):
-        page_url = url if page_index == 0 else f"{url}?pageIndex={page_index}"
-        found = parse_page(fetch_text(page_url), scraped_at)
-        new = [r for r in found if r["product_id"] not in rows]
-        for r in new:
-            rows[r["product_id"]] = r
-        if not new:
-            break
-        time.sleep(delay)
+    try:
+        for page_index in range(MAX_PAGES):
+            page_url = url if page_index == 0 else f"{url}?pageIndex={page_index}"
+            page = fetch_html(page_url)
+            if "Client Challenge" in page:
+                raise RuntimeError(f"challenge did not clear: {page_url}")
+            found = parse_page(page, scraped_at)
+            if page_index == 0 and not found:
+                raise RuntimeError(f"page 0 yielded no products: {page_url}")
+            new = [r for r in found if r["product_id"] not in rows]
+            for r in new:
+                rows[r["product_id"]] = r
+            if not new:
+                break
+            time.sleep(delay)
+    finally:
+        _close_browser()
     return list(rows.values())
 
 
@@ -174,7 +219,7 @@ def probe(keyword: str, out_dir: Path) -> None:
     for kind, urls in samples.items():
         for url in urls:
             time.sleep(DELAY_SECONDS)
-            page = fetch_text(url)
+            page = fetch_html(url)
             (out_dir / f"{kind}.html").write_text(page)
             blocks = _ld_json_blocks(page)
             report[f"{kind}_page"] = {
