@@ -256,11 +256,11 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         db.log_image_call(conn, draft_id, ok)
         if not ok:
             notes.append("The AI image failed, so this is the plain background.")
-    tries = ai_tries_left(cfg, conn, draft_id)
+    edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
-    card = discord.build_image_card(draft_id, payload["product"], source, tries, "\n".join(notes),
+    card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
                                     reply_to=row["discord_message_id"])
-    payload["image_message_id"] = discord.post_image_card(channel, card, path, tries, source)
+    payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
     db.set_payload(conn, draft_id, payload)
     db.set_status(conn, draft_id, "image_pending")
     print(f"draft #{draft_id}: image card v{version} ({source})")
@@ -300,22 +300,22 @@ def cmd_check_images(cfg: dict, conn) -> None:
             if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
                 discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
-            elif feedback:  # a written fix wins over the taps: make the image again as asked
+            elif feedback:  # a written edit wins over ✅: make the image again as asked
                 if ai_tries_left(cfg, conn, row["id"]) > 0:
-                    decision = "fix"
+                    decision = "edit"
                     send_image_card(cfg, conn, row, payload, ai=True, feedback=feedback)
                 else:
-                    decision = "fix refused"
+                    decision = "edit refused"
                     discord.reply(channel, message_id,
-                                  "⚠️ No AI image tries left for this post (see [image] in config.toml). "
-                                  "Tap ✅, ⬜ or ❌ instead.")
+                                  "⚠️ No edits left for this post (see [image] in config.toml). Tap ✅ or ❌.")
             elif decision == "accept":
                 db.set_status(conn, row["id"], "ready", decided_at=db.now())
                 discord.reply(channel, message_id, f"✅ Image for draft #{row['id']} approved. Queued for posting.")
-            elif decision == "retry":
-                send_image_card(cfg, conn, row, payload, ai=True)
-            elif decision == "plain":
-                send_image_card(cfg, conn, row, payload, ai=False)
+            elif decision == "edit" and payload.get("edit_hint_for") != message_id:  # ✏️ tapped, no reply yet
+                payload["edit_hint_for"] = message_id
+                db.set_payload(conn, row["id"], payload)
+                discord.reply(channel, message_id,
+                              "✏️ Reply to the image card with what to change, e.g. \"sản phẩm to hơn, nền sáng hơn\".")
             else:
                 continue
         except Exception as err:

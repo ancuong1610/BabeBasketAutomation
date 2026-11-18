@@ -44,8 +44,8 @@ class FlowTest(unittest.TestCase):
                 payload["scene_path"] = self.scene_file
             return str(out)
 
-        def fake_post_image_card(channel, card, path, tries, source):
-            self.cards.append({"card": card, "tries": tries, "source": source})
+        def fake_post_image_card(channel, card, path, edits_left):
+            self.cards.append({"card": card, "edits": edits_left})
             return f"IMG{len(self.cards)}"
 
         self.patches = [
@@ -89,7 +89,7 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(payload["image_message_id"], "IMG1")
         self.assertEqual(self.builds, [True])
         self.assertEqual(db.image_calls_for(self.conn, draft_id), 1)
-        self.assertEqual(self.cards[0]["tries"], 1)  # one 🔄 left
+        self.assertEqual(self.cards[0]["edits"], 1)  # one ✏️ edit left (max_per_post 2 in this test)
         self.assertEqual(self.cards[0]["card"]["message_reference"]["message_id"], "CAPTION")
 
     def test_accept_makes_it_ready(self):
@@ -104,34 +104,33 @@ class FlowTest(unittest.TestCase):
         self.decide("reject")
         self.assertEqual(self.row(draft_id)[0], "rejected")
 
-    def test_retry_makes_a_new_ai_image_then_runs_out(self):
+    def test_edits_run_out(self):
         draft_id = caption_approved(self.conn)
         cli.cmd_images(CFG, self.conn)
-        self.decide("retry")
-        status, payload = self.row(draft_id)
-        self.assertEqual(status, "image_pending")
-        self.assertEqual(payload["image_message_id"], "IMG2")
+        self.decide(None, feedback="to hơn")
         self.assertEqual(self.builds, [True, True])
-        self.assertEqual(self.cards[1]["tries"], 0)  # no more 🔄 offered
-        self.decide("retry")  # tapped anyway on the old card: falls back to plain, no paid call
-        self.assertEqual(self.builds, [True, True, False])
+        self.assertEqual(self.cards[1]["edits"], 0)
+        self.assertIn("no edits left", self.cards[1]["card"]["content"])
+        self.decide(None, feedback="nữa", last_id="R2")   # replied anyway: refused, no paid call
+        self.assertEqual(self.builds, [True, True])
         self.assertEqual(db.image_calls_for(self.conn, draft_id), 2)
-        self.assertIn("limit reached", self.cards[2]["card"]["content"])
+        self.assertIn("No edits left", self.replies[-1])
 
-    def test_plain_costs_nothing(self):
-        draft_id = caption_approved(self.conn)
+    def test_edit_tap_without_reply_reminds_once(self):
+        caption_approved(self.conn)
         cli.cmd_images(CFG, self.conn)
-        self.decide("plain")
-        self.assertEqual(self.builds, [True, False])
-        self.assertEqual(db.image_calls_for(self.conn, draft_id), 1)
-        self.assertEqual(self.cards[1]["source"], "fallback")
+        self.decide("edit")
+        self.decide("edit")
+        hints = [r for r in self.replies if "Reply to the image card" in r]
+        self.assertEqual(len(hints), 1)
+        self.assertEqual(self.builds, [True])
 
     def test_daily_cap_across_drafts(self):
         cfg = {**CFG, "image": {"enabled": True, "max_per_day": 2, "max_per_post": 2}}
         ids = [caption_approved(self.conn, str(i)) for i in range(3)]
         cli.cmd_images(cfg, self.conn)
         self.assertEqual(self.builds, [True, True, False])
-        self.assertEqual(self.cards[2]["source"], "fallback")
+        self.assertIn("plain background", self.cards[2]["card"]["content"])
         self.assertEqual([self.row(i)[0] for i in ids], ["image_pending"] * 3)
 
     def test_disabled_never_calls_ai(self):
@@ -169,8 +168,8 @@ class FlowTest(unittest.TestCase):
             cli.cmd_images(CFG, self.conn)
         self.assertEqual(self.builds, [])                       # nothing generated
         self.assertEqual(db.image_calls_for(self.conn, draft_id), 0)
-        self.assertEqual(self.cards[0]["source"], "gemini")
-        self.assertEqual(self.cards[0]["tries"], 2)            # 🔄 still available
+        self.assertNotIn("plain background", self.cards[0]["card"]["content"])
+        self.assertEqual(self.cards[0]["edits"], 2)            # both edits still available
 
     def test_publish_uses_the_approved_image_card(self):
         draft_id = caption_approved(self.conn)
@@ -215,13 +214,17 @@ class FixByReplyTest(FlowTest):
 
     def test_reply_on_plain_image_makes_a_new_ai_image_with_the_note(self):
         draft_id = caption_approved(self.conn)
-        cli.cmd_images(CFG, self.conn)
-        self.decide("plain")
+        payload = self.row(draft_id)[1]
+        payload.update(image_source="fallback")  # e.g. the AI image failed earlier
+        db.set_payload(self.conn, draft_id, payload)
+        db.set_status(self.conn, draft_id, "image_pending")
+        payload["image_message_id"] = "IMG0"
+        db.set_payload(self.conn, draft_id, payload)
         self.decide(None, feedback="hand on the left")
-        self.assertEqual(self.builds, [True, False, True])
-        self.assertEqual(self.build_kwargs[2]["feedback"], "hand on the left")
-        self.assertIsNone(self.build_kwargs[2]["previous"])   # nothing AI-made to edit
-        self.assertIn("New image with your note", self.cards[2]["card"]["content"])
+        self.assertEqual(self.builds, [True])
+        self.assertEqual(self.build_kwargs[0]["feedback"], "hand on the left")
+        self.assertIsNone(self.build_kwargs[0]["previous"])   # nothing AI-made to edit
+        self.assertIn("New image with your note", self.cards[0]["card"]["content"])
 
     def test_reply_with_no_tries_left_explains_once(self):
         cfg = {**CFG, "image": {"enabled": True, "max_per_day": 6, "max_per_post": 1}}
@@ -229,7 +232,7 @@ class FixByReplyTest(FlowTest):
         cli.cmd_images(cfg, self.conn)
         self.decide(None, feedback="brighter", cfg=cfg)
         self.assertEqual(self.builds, [True])
-        self.assertIn("No AI image tries left", self.replies[-1])
+        self.assertIn("No edits left", self.replies[-1])
         self.assertEqual(self.row(draft_id)[1]["feedback_seen"], "R1")
 
     def test_seen_replies_are_not_read_again(self):
@@ -279,19 +282,26 @@ class ImageDecisionTest(unittest.TestCase):
     def test_priorities(self):
         self.assertIsNone(self.decide([]))
         self.assertEqual(self.decide(["✅"]), "accept")
-        self.assertEqual(self.decide(["⬜"]), "plain")
-        self.assertEqual(self.decide(["✅", "🔄"]), "retry")
+        self.assertEqual(self.decide(["✏️"]), "edit")
+        self.assertEqual(self.decide(["✏️", "✅"]), "accept")   # ✏️ by mistake, then ✅
         self.assertEqual(self.decide(["✅", "❌"]), "reject")
 
-    def test_image_card_offers_only_available_actions(self):
+    def test_image_card_has_only_accept_reject_edit(self):
         product = {"store": "dm", "brand": "B", "name": "N"}
-        ai = discord.build_image_card(3, product, "gemini", 1, reply_to="CAP")["content"]
-        self.assertIn("🔄", ai)
-        self.assertIn("⬜", ai)
-        plain = discord.build_image_card(3, product, "fallback", 0)["content"]
-        self.assertNotIn("🔄", plain)
-        self.assertNotIn("⬜", plain)
+        card = discord.build_image_card(3, product, "gemini", 2, reply_to="CAP")["content"]
+        for word in ("✅ accept", "❌ reject", "✏️ edit", "reply to this message", "2 left"):
+            self.assertIn(word, card)
+        self.assertNotIn("🔄", card)
+        self.assertNotIn("⬜", card)
+        self.assertIn("no edits left", discord.build_image_card(3, product, "gemini", 0)["content"])
 
+    def test_reactions_match_the_options(self):
+        with mock.patch.object(discord, "_send", return_value={"id": "M"}), \
+                mock.patch.object(discord, "_react") as react:
+            discord.post_image_card("CH", {}, "x.jpg", edits_left=1)
+            self.assertEqual(react.call_args.args[2], ["✅", "❌", "✏️"])
+            discord.post_image_card("CH", {}, "x.jpg", edits_left=0)
+            self.assertEqual(react.call_args.args[2], ["✅", "❌"])
 
 if __name__ == "__main__":
     unittest.main()

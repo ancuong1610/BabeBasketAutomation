@@ -59,4 +59,4 @@ model = "google/gemini-3.1-flash-image"
 enabled = true
 # AI images are made only after the caption is approved (about $0.08 each).
 max_per_day = 6          # paid image requests per day; after that the plain background is used
-max_per_post = 3         # first try + two 🔄 / reply-with-a-fix rounds
+max_per_post = 3         # first image + two ✏️ edits

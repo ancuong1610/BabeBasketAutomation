@@ -1,7 +1,7 @@
 """Ask a Gemini image model (via OpenRouter) to put the packshot in a hand in a drugstore aisle.
 
 With `feedback` and a `previous` scene, the model edits that scene as the owner asked
-instead of starting over (the 🔄 + reply flow on the Discord image card).
+instead of starting over (the ✏️ edit = reply flow on the Discord image card).
 
 Returns the generated image bytes, or None on any failure: the caller then uses the
 plain fallback scene. The model never writes text on the image; postimage.py does that.

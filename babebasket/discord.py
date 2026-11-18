@@ -2,9 +2,9 @@
 
 Two steps per post:
 1. Caption card (store packshot, captions): tap 1️⃣–4️⃣ for the caption, ✅ to approve, ❌ to reject.
-2. Image card (the AI post image, made only after step 1): ✅ use it, 🔄 make a new one,
-   ⬜ use the plain background instead, ❌ drop the post. A text reply to the image card
-   ("product bigger, brighter shelf") makes the AI edit that image as asked.
+2. Image card (the AI post image, made only after step 1): ✅ accept, ❌ reject,
+   ✏️ edit = reply to the card with what to change ("product bigger, brighter shelf"),
+   and the AI edits that image as asked.
 `check` reads the reactions back.
 """
 
@@ -23,7 +23,7 @@ from babebasket.llm import image_labels
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
-RETRY, PLAIN = "🔄", "⬜"
+EDIT = "✏️"
 # Owner-only marker: which store the product comes from (never part of the post itself)
 STORE_BADGES = {"dm": "🟦 DM", "rossmann": "🟥 ROSSMANN"}
 STORE_COLORS = {"dm": 0x1F5FAD, "rossmann": 0xC8102E}
@@ -116,14 +116,14 @@ def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | No
     return message["id"]
 
 
-def build_image_card(draft_id: int, product: dict, source: str, ai_tries_left: int, note: str = "",
+def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
                      reply_to: str | None = None) -> dict:
-    kind = "AI scene" if source == "gemini" else "plain background"
-    actions = "✅ use this image · " + (f"🔄 new AI image ({ai_tries_left} left) · " if ai_tries_left > 0 else "") \
-        + ("⬜ plain background · " if source == "gemini" else "") + "❌ drop the post"
-    content = f"🖼️ **Draft #{draft_id}** post image ({kind}): {actions}"
-    if ai_tries_left > 0:
-        content += "\n💬 Or **reply to this message** with what to fix (e.g. \"sản phẩm to hơn, nền sáng hơn\")."
+    kind = "" if source == "gemini" else " (plain background)"
+    if edits_left > 0:
+        edit = f"✏️ edit: **reply to this message** with what to change ({edits_left} left)"
+    else:
+        edit = "✏️ no edits left"
+    content = f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
     if note:
         content += f"\n{note}"
     card = {
@@ -142,10 +142,9 @@ def build_image_card(draft_id: int, product: dict, source: str, ai_tries_left: i
     return card
 
 
-def post_image_card(channel_id: str, card: dict, image_path: str, ai_tries_left: int, source: str) -> str:
+def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int) -> str:
     message = _send(channel_id, card, image_path)
-    emojis = [APPROVE] + ([RETRY] if ai_tries_left > 0 else []) + ([PLAIN] if source == "gemini" else []) + [REJECT]
-    _react(channel_id, message["id"], emojis)
+    _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []))
     return message["id"]
 
 
@@ -185,9 +184,12 @@ def read_decision(channel_id: str, message_id: str, n_captions: int, owners: lis
 
 
 def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> str | None:
-    """Image card. None while undecided; else 'reject', 'retry', 'plain' or 'accept' (in that priority)."""
-    taps = owner_taps(channel_id, message_id, [APPROVE, RETRY, PLAIN, REJECT], owners)
-    for emoji, decision in ((REJECT, "reject"), (RETRY, "retry"), (PLAIN, "plain"), (APPROVE, "accept")):
+    """Image card. None while undecided; else 'reject', 'accept' or 'edit' (in that priority).
+
+    'edit' (✏️ tapped) only reminds the owner to reply; the change itself comes from the reply text.
+    """
+    taps = owner_taps(channel_id, message_id, [APPROVE, REJECT, EDIT], owners)
+    for emoji, decision in ((REJECT, "reject"), (APPROVE, "accept"), (EDIT, "edit")):
         if emoji in taps:
             return decision
     return None

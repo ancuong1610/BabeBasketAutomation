@@ -30,13 +30,12 @@ Two steps per post, so no paid AI image is made for a post you reject.
 
 **2. Image card**, sent as a reply under the caption card on the next `check` (≤10 min):
 
-- ✅ use this image → queued for posting
-- 🔄 make a completely new AI image (shown only while tries are left)
-- 💬 **reply to the image card** with what to fix, in Vietnamese or English
-  ("sản phẩm to hơn, nền sáng hơn", "hand from the left", "less blur"): the AI edits *that*
-  image as asked and keeps the packaging identical to the store photo. A reply wins over ✅.
-- ⬜ use the plain background instead (free)
-- ❌ drop the post (wins over everything)
+- ✅ **accept** → queued for posting
+- ❌ **reject** → the post is dropped (wins over everything)
+- ✏️ **edit** → **reply to the image card** with what to change, in Vietnamese or English
+  ("sản phẩm to hơn, nền sáng hơn", "hand from the left", "less blur"). The AI edits *that*
+  image as asked and keeps the packaging identical to the store photo, then sends a new card.
+  Tapping ✏️ without replying just gets a reminder to reply. A reply wins over ✅.
 
 Replies need the bot's **Message Content Intent** switched on (Discord Developer Portal →
 your app → Bot → Privileged Gateway Intents). Without it the bot says so under the card.
@@ -88,7 +87,7 @@ Made only after the caption is approved (step 2 above), as one finished image (1
 3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
 
 Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
-(default 3: first try + two 🔄 or fixes) and `max_per_day` (default 6) cap the paid requests; past a cap
+(default 3: the first image + two ✏️ edits) and `max_per_day` (default 6) cap the paid requests; past a cap
 the plain background is used and the card says so. Every paid request is logged in the
 `image_calls` table. `enabled = false` turns AI images off entirely.
 
