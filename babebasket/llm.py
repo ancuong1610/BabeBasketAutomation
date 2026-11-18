@@ -99,6 +99,11 @@ NO_DETAILS_NOTE = (
 )
 NO_REVIEWS_WARNING = "no reviews or description given: check the summary and claims"
 
+PAIR_NOTE = (
+    "\nĐây là BỘ ĐÔI dầu gội + dầu xả cùng dòng, bán theo cặp (khách Việt quen gội và xả cùng một dòng). "
+    "Caption và nhãn ảnh nói về cả bộ gội + xả, không chỉ một chai."
+)
+
 SUPPLEMENT_NOTE = (
     "\nĐây là thực phẩm chức năng: chỉ dùng công dụng nhà sản xuất công bố ở trên, "
     "không hứa hẹn tác dụng điều trị."
@@ -110,8 +115,8 @@ def is_supplement(detail: dict, product: dict) -> bool:
     return bool(re.search(r"Nahrungserg|Vitamin|Gesundheit|Arznei", text))
 
 
-def build_messages(product: dict, detail: dict, reviews: list[dict]) -> list[dict]:
-    info = {
+def _product_info(product: dict, detail: dict) -> dict:
+    return {
         "brand": product["brand"],
         "name": product["name"],
         "category": " > ".join(detail.get("breadcrumbs", [])) or product.get("categories"),
@@ -121,12 +126,21 @@ def build_messages(product: dict, detail: dict, reviews: list[dict]) -> list[dic
         "usage": detail.get("usage", "")[:400],
         "rating": f"{product['rating']:.1f}/5 from {product['review_count']} reviews",
     }
+
+
+def build_messages(product: dict, detail: dict, reviews: list[dict],
+                   pair: dict | None = None, pair_detail: dict | None = None) -> list[dict]:
+    info = _product_info(product, detail)
+    if pair:
+        info = {"bộ đôi bán theo cặp": [info, _product_info(pair, pair_detail or {})]}
     review_lines = [
         f"- {r['rating']}★ {r['title']}: {r['text'][:500]} ({r['reviewer']})"
         for r in reviews
         if not r.get("incentivized")
     ][:12]
     extra = SUPPLEMENT_NOTE if is_supplement(detail, product) else ""
+    if pair:
+        extra += PAIR_NOTE
     if not review_lines:
         extra += NO_REVIEWS_NOTE.replace("{rating}", f"{product['rating']:.1f}/5 ({product['review_count']} lượt đánh giá)")
     if not (detail.get("description") or detail.get("claims") or detail.get("features")):
@@ -221,9 +235,10 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
     return out
 
 
-def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, attempts: int = 2) -> dict:
+def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, attempts: int = 2,
+               pair: dict | None = None, pair_detail: dict | None = None) -> dict:
     llm = cfg["llm"]
-    messages = build_messages(product, detail, reviews)
+    messages = build_messages(product, detail, reviews, pair=pair, pair_detail=pair_detail)
     last_problems: list[str] = []
     for _ in range(attempts):
         reply = request_json(

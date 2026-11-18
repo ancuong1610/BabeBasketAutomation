@@ -50,6 +50,11 @@ colours, brand, logo and label text. Do not redesign, translate or invent anythi
 - Do not add any text, captions, stickers, logos, watermarks or price tags.
 - Vertical 4:5 photo."""
 
+PAIR_SCENE_NOTE = (
+    "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
+    "Show BOTH together, held side by side, both front labels fully visible and unchanged; "
+    "together they take the central product area described above."
+)
 FEEDBACK_NOTE = "\n\nThe shop owner also asks (the hard rules above still win): \"{feedback}\""
 MAX_FEEDBACK_CHARS = 500
 
@@ -88,7 +93,10 @@ def generate(
         return f"data:{_mime(img)};base64," + base64.b64encode(img).decode()
 
     feedback = " ".join((feedback or "").split())[:MAX_FEEDBACK_CHARS]
+    pair = product.get("pair") or {}
     product_name = f"{product.get('brand', '')} {product.get('name', '')}".strip()
+    if pair:
+        product_name += f" + {pair.get('name', '')}"
     if feedback and previous:
         content = [
             {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback)},
@@ -96,7 +104,8 @@ def generate(
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
     else:
-        text = PROMPT.format(product=product_name) + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
+        text = PROMPT.format(product=product_name) + (PAIR_SCENE_NOTE if pair else "") \
+            + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
         content = [
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},

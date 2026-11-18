@@ -93,8 +93,16 @@ def set_status(conn: sqlite3.Connection, draft_id: int, status: str, **fields) -
 
 def recently_drafted(conn: sqlite3.Connection, days: int) -> set[tuple[str, str]]:
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat(timespec="seconds")
-    rows = conn.execute("SELECT store, product_id FROM drafts WHERE created_at >= ?", (cutoff,)).fetchall()
-    return {(r["store"], r["product_id"]) for r in rows}
+    rows = conn.execute("SELECT store, product_id, payload FROM drafts WHERE created_at >= ?", (cutoff,)).fetchall()
+    out = {(r["store"], r["product_id"]) for r in rows}
+    for r in rows:  # the conditioner of a shampoo + conditioner pair counts as drafted too
+        try:
+            pair = (json.loads(r["payload"]).get("product") or {}).get("pair")
+        except (ValueError, AttributeError):
+            pair = None
+        if pair:
+            out.add((pair.get("store", r["store"]), str(pair.get("product_id"))))
+    return out
 
 
 def set_payload(conn: sqlite3.Connection, draft_id: int, payload: dict) -> None:

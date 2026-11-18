@@ -6,17 +6,17 @@
 # (aerosols / flammable, accessories, electrical, perfume except Jean & Len hair perfume,
 # non-beauty supplements) and sorts Rossmann products into the same groups by name.
 [groups.hair]
-per_day = 3
+per_day = 5
 dm = ["Shampoo", "Conditioner", "Haarkur & Haarmaske", "Leave-In", "Haaröl", "Haarstyling"]
 
 [groups.body]
-per_day = 2
+per_day = 3
 dm = ["Bodylotion & Hautcreme", "Körperöl", "Deo", "Handcreme & Handmasken", "Fußpflege",
       "Duschgel", "Körperpeeling & Body Scrub", "Badezusatz & Badesalz", "Intimpflege & -gesundheit"]
 
 [groups.extra]
 # Sun care, skincare, beauty supplements, gift sets, men's products: only very well rated ones.
-per_day = 1
+per_day = 2
 min_rating = 4.5
 min_reviews = 100
 dm = ["Sonnenpflege", "Gesichtspflege", "Hautbild", "Wohlbefinden & Stärkung", "Abnehmprodukte",
@@ -31,7 +31,7 @@ categories = [
 
 
 [shortlist]
-per_day = 6              # products drafted per day (the [groups] quotas add up to this)
+per_day = 10             # posts drafted per day (the [groups] quotas add up to this)
 min_rating = 4.2         # hair and body; [groups.extra] is stricter
 min_reviews = 30
 sweet_spot_eur = 10      # students' budget: dearer products rank lower
@@ -74,5 +74,5 @@ enabled = true
 model = "google/gemini-3.1-flash-image"
 enabled = true
 # AI images are made only after the caption is approved (about $0.08 each).
-max_per_day = 6          # paid image requests per day; after that the plain background is used
+max_per_day = 10         # paid image requests per day; after that the plain background is used
 max_per_post = 3         # first image + two ✏️ edits

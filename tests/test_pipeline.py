@@ -64,17 +64,17 @@ class ShortlistTest(unittest.TestCase):
     def test_filters_ranks_and_limits_brand_repeats(self):
         cfg = {**CFG, "groups": {"hair": {"per_day": 3}}}
         db.upsert_products(self.conn, [
-            item("1", "Balea", "Shampoo A", SHAMPOO, 4.8, 2000),
-            item("2", "Balea", "Shampoo B", SHAMPOO, 4.7, 1500),
-            item("3", "Balea", "Shampoo C", SHAMPOO, 4.7, 1400),   # third Balea: dropped for variety
-            item("4", "Garnier", "Shampoo D", SHAMPOO, 4.5, 800),
-            item("5", "Nivea", "Shampoo E", SHAMPOO, 4.9, 10),     # too few reviews
-            item("6", "Dove", "Shampoo F", SHAMPOO, 3.9, 900),     # rating too low
+            item("1", "Balea", "Haarkur A", SHAMPOO, 4.8, 2000),
+            item("2", "Balea", "Haarkur B", SHAMPOO, 4.7, 1500),
+            item("3", "Balea", "Haarkur C", SHAMPOO, 4.7, 1400),   # third Balea: dropped for variety
+            item("4", "Garnier", "Haarkur D", SHAMPOO, 4.5, 800),
+            item("5", "Nivea", "Haarkur E", SHAMPOO, 4.9, 10),     # too few reviews
+            item("6", "Dove", "Haarkur F", SHAMPOO, 3.9, 900),     # rating too low
         ])
         self.assertEqual(self.pick(cfg), ["1", "2", "4"])
 
     def test_skips_recently_drafted(self):
-        db.upsert_products(self.conn, [item("1", "Balea", "Shampoo", SHAMPOO), item("2", "Garnier", "Shampoo", SHAMPOO)])
+        db.upsert_products(self.conn, [item("1", "Balea", "Haarkur", SHAMPOO), item("2", "Garnier", "Haarkur", SHAMPOO)])
         db.add_draft(self.conn, "dm", "1", {})
         self.assertEqual(self.pick(), ["2"])
 
@@ -88,7 +88,7 @@ class ShortlistTest(unittest.TestCase):
 
     def test_empty_group_is_filled_from_the_others(self):
         brands = iter(f"B{i}" for i in range(100))
-        rows = [item(f"h{i}", next(brands), f"Shampoo {i}", SHAMPOO, 4.8, 900 - i) for i in range(8)]
+        rows = [item(f"h{i}", next(brands), f"Haarkur {i}", SHAMPOO, 4.8, 900 - i) for i in range(8)]
         db.upsert_products(self.conn, rows)
         self.assertEqual(len(self.pick(SHOP)), 6)
 
@@ -102,15 +102,15 @@ class ShortlistTest(unittest.TestCase):
 
     def test_price_cap_and_gift_set_exception(self):
         db.upsert_products(self.conn, [
-            item("dear", "A", "Shampoo Luxus", SHAMPOO, 4.9, 3000, price=24.95),
+            item("dear", "A", "Haarkur Luxus", SHAMPOO, 4.9, 3000, price=24.95),
             item("gift", "B", "Geschenkset Haarpflege", "Geschenksets", 4.9, 3000, price=29.95),
         ])
         self.assertEqual(self.pick(SHOP), ["gift"])
 
     def test_cheaper_ranks_above_dearer_at_equal_reviews(self):
         db.upsert_products(self.conn, [
-            item("dear", "A", "Shampoo 1", SHAMPOO, 4.7, 1000, price=14.95),
-            item("cheap", "B", "Shampoo 2", SHAMPOO, 4.7, 1000, price=4.95),
+            item("dear", "A", "Haarkur 1", SHAMPOO, 4.7, 1000, price=14.95),
+            item("cheap", "B", "Haarkur 2", SHAMPOO, 4.7, 1000, price=4.95),
         ])
         self.assertEqual(self.pick(SHOP), ["cheap", "dear"])
 
@@ -124,11 +124,58 @@ class ShortlistTest(unittest.TestCase):
         self.assertEqual(self.pick(SHOP), ["jl"])
 
     def test_flammable_products_are_skipped(self):
-        db.upsert_products(self.conn, [item("1", "A", "Shampoo", SHAMPOO), item("2", "B", "Shampoo", SHAMPOO)])
+        db.upsert_products(self.conn, [item("1", "A", "Haarkur", SHAMPOO), item("2", "B", "Haarkur", SHAMPOO)])
         self.assertEqual(self.pick(SHOP, check=lambda p: (p["product_id"] != "1", "flammable")), ["2"])
 
     def test_many_reviews_beat_few_perfect_ones(self):
         self.assertGreater(shortlist.score(4.6, 3000, "", []), shortlist.score(5.0, 31, "", []))
+
+
+    def test_shampoo_goes_out_with_its_conditioner(self):
+        db.upsert_products(self.conn, [
+            item("s1", "Wahre Schätze", "Shampoo Traube Hydraboost, 300 ml", SHAMPOO, 4.8, 2000),
+            item("c1", "Wahre Schätze", "Conditioner Traube Hydraboost, 250 ml", "Conditioner", 4.6, 300),
+            item("c2", "Wahre Schätze", "Conditioner Honig Schätze, 250 ml", "Conditioner", 4.9, 900),
+        ])
+        picks = shortlist.pick(self.conn, {**SHOP, "groups": {"hair": {"per_day": 1}}}, limit=1, check=safe)
+        self.assertEqual([p["product_id"] for p in picks], ["s1"])
+        self.assertEqual(picks[0]["pair"]["product_id"], "c1")
+
+    def test_shampoo_without_conditioner_is_sold_alone(self):
+        db.upsert_products(self.conn, [item("s1", "A", "Shampoo Lonely Line, 300 ml", SHAMPOO, 4.9, 3000)])
+        picks = shortlist.pick(self.conn, SHOP, check=safe)
+        self.assertEqual([p["product_id"] for p in picks], ["s1"])
+        self.assertNotIn("pair", picks[0])
+
+    def test_picked_conditioner_brings_its_shampoo_first(self):
+        db.upsert_products(self.conn, [
+            item("c1", "Syoss", "Conditioner Intense Keratin, 250 ml", "Conditioner", 4.9, 3000),
+            item("s1", "Syoss", "Shampoo Intense Keratin, 440 ml", SHAMPOO, 4.5, 200),
+        ])
+        picks = shortlist.pick(self.conn, SHOP, check=safe)
+        self.assertEqual(len(picks), 1)          # one post, not two
+        self.assertEqual((picks[0]["product_id"], picks[0]["pair"]["product_id"]), ("s1", "c1"))
+
+    def test_two_in_one_needs_no_pair(self):
+        db.upsert_products(self.conn, [item("x", "P", "Shampoo & Conditioner 2in1, 250 ml", "Conditioner; Shampoo")])
+        self.assertEqual(self.pick(SHOP), ["x"])
+
+    def test_pair_is_not_redrafted(self):
+        db.upsert_products(self.conn, [
+            item("s1", "N", "Shampoo Power Repair, 250 ml", SHAMPOO, 4.8, 900),
+            item("c1", "N", "Conditioner Power Repair, 200 ml", "Conditioner", 4.7, 400),
+        ])
+        db.add_draft(self.conn, "dm", "s1", {"product": {"pair": {"store": "dm", "product_id": "c1"}}})
+        self.assertEqual(self.pick(SHOP), [])
+
+    def test_unsafe_partner_means_shampoo_alone(self):
+        db.upsert_products(self.conn, [
+            item("s1", "N", "Shampoo Power Repair, 250 ml", SHAMPOO, 4.8, 900),
+            item("c1", "N", "Conditioner Power Repair, 200 ml", "Conditioner", 4.7, 400),
+        ])
+        picks = shortlist.pick(self.conn, SHOP, check=lambda p: (p["product_id"] != "c1", "fire"))
+        self.assertEqual([p["product_id"] for p in picks], ["s1"])
+        self.assertNotIn("pair", picks[0])
 
 
 GOOD_DRAFT = {

@@ -56,6 +56,42 @@ class ClassifyTest(unittest.TestCase):
         self.assertIsNone(cls("Eau de Parfum", "Parfum", "Jean&Len"))
 
 
+class PairTest(unittest.TestCase):
+    def p(self, pid, name, brand="L'ORÉAL PARiS ELVITAL", rating=4.5, reviews=100):
+        return {"store": "dm", "product_id": pid, "brand": brand, "name": name, "price_eur": 3.45,
+                "rating": rating, "review_count": reviews}
+
+    def test_kinds(self):
+        self.assertEqual(catalog.hair_kind(self.p("1", "Shampoo Glycolic Gloss, 200 ml")), "shampoo")
+        self.assertEqual(catalog.hair_kind(self.p("1", "Spülung Repair, 200 ml")), "conditioner")
+        self.assertIsNone(catalog.hair_kind(self.p("1", "Sprüh-Conditioner Express Repair, 200 ml")))
+        self.assertEqual(catalog.hair_kind(self.p("1", "Shampoo & Conditioner 2in1, 250 ml")), "2in1")
+        self.assertIsNone(catalog.hair_kind(self.p("1", "Haarkur Glow, 200 ml")))
+
+    def test_exact_twin_wins_even_with_lower_rating(self):
+        shampoo = self.p("s", "Shampoo Hydra Hyaluronic, feuchtigkeitsspendend, 1.000 ml")
+        rows = [shampoo,
+                self.p("c1", "Conditioner Hydra Hyaluronic, feuchtigkeitsversiegelnd, 200 ml", rating=3.4),
+                self.p("c2", "Conditioner Hydra Hyaluronic Pure, 200 ml", brand="L'ORÉAL PARiS Elvital", rating=4.4)]
+        self.assertEqual(catalog.find_partner(shampoo, rows)["product_id"], "c1")
+
+    def test_line_contained_and_spacing(self):
+        gliss = self.p("s", "Shampoo Full Hair Magic, 250 ml", "Schwarzkopf GLISS")
+        rows = [gliss, self.p("c", "Conditioner Express Repair Full Hair Magic, 200 ml", "Schwarzkopf GLISS")]
+        self.assertEqual(catalog.find_partner(gliss, rows)["product_id"], "c")
+        honey = self.p("s", "Shampoo Honigschätze, 1.000 ml", "Wahre Schätze")
+        rows = [honey, self.p("c", "Conditioner Honig Schätze, 250 ml", "Wahre Schätze")]
+        self.assertEqual(catalog.find_partner(honey, rows)["product_id"], "c")
+
+    def test_no_pair_across_brands_lines_or_poor_ratings(self):
+        shampoo = self.p("s", "Shampoo Colour Protect, 300 ml", "PANTENE PRO-V")
+        rows = [shampoo,
+                self.p("a", "Conditioner Colour Protect, 200 ml", "Other Brand"),
+                self.p("b", "Conditioner Grow Abundant, 250 ml", "PANTENE PRO-V"),
+                self.p("c", "Conditioner Colour Protect, 200 ml", "PANTENE PRO-V", rating=2.5)]
+        self.assertIsNone(catalog.find_partner(shampoo, rows))
+
+
 DRY_SHAMPOO = {"descriptionGroups": [
     {"header": "Produktbeschreibung", "contentBlock": [{"texts": ["Trockenshampoo"]}]},
     {"header": "Warnhinweise", "contentBlock": [{"texts": [

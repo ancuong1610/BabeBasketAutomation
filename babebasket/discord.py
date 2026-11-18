@@ -68,11 +68,20 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
         {"name": "Rating", "value": f"⭐ {product['rating']:.2f} · {product['review_count']} reviews", "inline": True},
     ]
+    pair = product.get("pair")
+    if pair:
+        fields[1]["name"] = "Shelf price (gội + xả)"
+        fields[2]["name"] = "Rating gội"
+        fields += [
+            {"name": "🧴 Bộ đôi", "value": f"+ {pair.get('name', '')}"[:1024], "inline": False},
+            {"name": "Rating xả", "value": f"⭐ {pair.get('rating') or 0:.2f} · {pair.get('review_count') or 0} reviews",
+             "inline": True},
+    ]
     if warnings:
         fields.append({"name": "⚠️ Check", "value": "\n".join(warnings)[:1024], "inline": False})
 
     embed = {
-        "title": f"{product['brand']} · {product['name']}"[:256],
+        "title": f"{product['brand']} · {product['name']}{' + ' + product['pair']['name'] if product.get('pair') else ''}"[:256],
         "url": product.get("product_url"),
         "description": description,
         "fields": fields,
@@ -128,7 +137,8 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
     card = {
         "content": content[:2000],
         "embeds": [{
-            "title": f"{product.get('brand', '')} · {product.get('name', '')}"[:256],
+            "title": (f"{product.get('brand', '')} · {product.get('name', '')}"
+                      + (f" + {product['pair'].get('name', '')}" if product.get("pair") else ""))[:256],
             "image": {"url": "attachment://post.jpg"},
             "footer": {"text": f"draft {draft_id} · image"},
             "color": STORE_COLORS.get(product.get("store"), 0xF6E7A1),

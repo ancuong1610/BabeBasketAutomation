@@ -48,8 +48,8 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
     skip = db.recently_drafted(conn, sc["repeat_after_days"])
 
     ranked: dict[str, list[dict]] = {g: [] for g in groups}
-    for r in conn.execute("SELECT * FROM products WHERE price_eur IS NOT NULL").fetchall():
-        item = dict(r)
+    all_rows = [dict(r) for r in conn.execute("SELECT * FROM products WHERE price_eur IS NOT NULL").fetchall()]
+    for item in all_rows:
         if (item["store"], item["product_id"]) in skip:
             continue
         group, _ = eligible(item, cfg)
@@ -66,13 +66,38 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
     total = limit or sc["per_day"]
     out: list[dict] = []
     per_brand: dict[str, int] = {}
+    used: set[tuple[str, str]] = set()   # products already in today's list, alone or as half of a pair
+
+    def with_partner(item: dict) -> tuple[dict | None, str]:
+        """Shampoo and conditioner go out as a matching pair when one exists (owner's preference);
+        with no usable twin the product is sold on its own."""
+        if catalog.hair_kind(item) not in ("shampoo", "conditioner"):
+            return item, ""
+        partner = catalog.find_partner(item, all_rows)
+        if partner is None:
+            return item, ""
+        key = (partner["store"], partner["product_id"])
+        if key in skip or key in used:
+            return item, ""
+        try:
+            ok, _ = check(partner)
+        except Exception:
+            ok = False
+        if not ok:
+            return item, ""
+        shampoo, conditioner = (item, partner) if catalog.hair_kind(item) == "shampoo" else (partner, item)
+        post = dict(shampoo, score=item["score"], group=item["group"])
+        post["pair"] = {k: conditioner.get(k) for k in (
+            "store", "product_id", "gtin", "brand", "name", "price_eur", "unit_price", "rating",
+            "review_count", "categories", "image_url", "product_url")}
+        return post, ""
 
     def take(items: list[dict], quota: int) -> None:
         taken = 0
         for item in items:
             if taken >= quota or len(out) >= total:
                 return
-            if item in out:
+            if (item["store"], item["product_id"]) in used:
                 continue
             brand = (item["brand"] or "").split()[0].lower()
             if per_brand.get(brand, 0) >= 2:  # variety: at most 2 per brand per day
@@ -81,11 +106,18 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
                 ok, reason = check(item)
             except Exception as err:  # cannot verify: leave it out today
                 ok, reason = False, f"safety check failed: {err}"
+            post = item
+            if ok:
+                post, reason = with_partner(item)
+                ok = post is not None
             if not ok:
                 print(f"skip {item['brand']} {item['name'][:40]}: {reason}", file=sys.stderr)
                 continue
             per_brand[brand] = per_brand.get(brand, 0) + 1
-            out.append(item)
+            out.append(post)
+            used.add((post["store"], post["product_id"]))
+            if post.get("pair"):
+                used.add((post["pair"]["store"], post["pair"]["product_id"]))
             taken += 1
 
     for group, rules in groups.items():           # each group's own quota first ...

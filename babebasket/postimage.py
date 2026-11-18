@@ -142,6 +142,23 @@ def last_layout(img: Image.Image) -> dict:
     return img.info.get("layout", {})
 
 
+def side_by_side(left: bytes, right: bytes, gap: int = 40) -> bytes:
+    """Two packshots on one white image, same height, e.g. shampoo + conditioner."""
+    imgs = []
+    for data in (left, right):
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
+        flat = Image.new("RGBA", img.size, WHITE + (255,))
+        imgs.append(Image.alpha_composite(flat, img).convert("RGB"))
+    h = max(i.height for i in imgs)
+    imgs = [i.resize((max(1, round(i.width * h / i.height)), h), Image.LANCZOS) for i in imgs]
+    canvas = Image.new("RGB", (sum(i.width for i in imgs) + gap, h), WHITE)
+    canvas.paste(imgs[0], (0, 0))
+    canvas.paste(imgs[1], (imgs[0].width + gap, 0))
+    out = io.BytesIO()
+    canvas.save(out, "PNG")
+    return out.getvalue()
+
+
 def fallback_scene(packshot: bytes) -> Image.Image:
     """Warm cream gradient with the packshot in the middle (white background blended away)."""
     top, bottom = (248, 242, 234), (233, 220, 204)

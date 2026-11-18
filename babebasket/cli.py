@@ -81,8 +81,14 @@ def enrich(product: dict) -> tuple[dict, list[dict]]:
 
 def make_draft(product: dict, cfg: dict) -> dict:
     detail, reviews = enrich(product)
-    quote = pricing.quote(product["price_eur"], product["store"], cfg)
-    draft = llm.draft_post(product, detail, reviews, cfg)
+    pair, pair_detail, price = product.get("pair"), None, product["price_eur"]
+    if pair:  # shampoo + matching conditioner, sold together
+        time.sleep(1)
+        pair_detail, pair_reviews = enrich(pair)
+        reviews = reviews[:8] + pair_reviews[:6]
+        price = round(price + (pair.get("price_eur") or 0), 2)
+    quote = pricing.quote(price, product["store"], cfg)
+    draft = llm.draft_post(product, detail, reviews, cfg, pair=pair, pair_detail=pair_detail)
     warnings = llm.warnings(draft, had_reviews=bool(reviews))
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
 
@@ -117,6 +123,9 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         return None
     try:
         packshot = fetch_bytes(product["image_url"])
+        pair = product.get("pair") or {}
+        if pair.get("image_url"):  # shampoo + conditioner: both bottles in one picture
+            packshot = postimage.side_by_side(packshot, fetch_bytes(pair["image_url"]))
     except Exception as err:
         print(f"! packshot download failed for {product['product_id']}: {err}", file=sys.stderr)
         return None

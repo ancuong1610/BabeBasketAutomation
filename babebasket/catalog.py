@@ -140,3 +140,67 @@ def make_safety_checker(conn: sqlite3.Connection, fetch_detail: Callable[[str], 
         return not reason, reason
 
     return check
+
+
+# --- shampoo + conditioner pairs ---------------------------------------------------------
+# Shampoo and conditioner are sold as a pair of the same brand and line ("Shampoo Traube
+# Hydraboost" + "Conditioner Traube Hydraboost"); dm lists them apart, so we match them.
+TWO_IN_ONE = re.compile(r"\d\s*in\s*1|shampoo\s*&\s*(conditioner|spülung)|(conditioner|spülung)\s*&\s*shampoo", re.I)
+SHAMPOO_NAME = re.compile(r"^\s*(haar)?shampoo\b", re.I)
+CONDITIONER_NAME = re.compile(r"^\s*(haar)?(conditioner|spülung)\b", re.I)
+PARTNER_MIN_RATING = 3.0   # the twin of a good product; the card shows its rating so the owner can judge
+LINE_STOP = {"ml", "l", "g", "st", "und", "&", "mit", "für", "x"}
+
+
+def hair_kind(product: dict) -> str | None:
+    """'shampoo', 'conditioner' (rinse-out, not spray), '2in1', or None."""
+    name = product.get("name") or ""
+    if TWO_IN_ONE.search(name):
+        return "2in1"
+    if SHAMPOO_NAME.search(name):
+        return "shampoo"
+    if CONDITIONER_NAME.search(name) and not re.search(r"sprüh|spray|leave", name, re.I):
+        return "conditioner"
+    return None
+
+
+def line_words(product: dict) -> list[str]:
+    """The product line: the words between the type word and the first comma, e.g. ['traube', 'hydraboost']."""
+    name = re.sub(r"^\s*(haar)?(shampoo|conditioner|spülung)\b", "", product.get("name") or "", flags=re.I)
+    line = re.sub(r"[-/+]", " ", name.split(",")[0].lower())
+    return [w for w in re.findall(r"[\wäöüß]+", line) if w not in LINE_STOP and not w.isdigit()]
+
+
+def same_line(a: dict, b: dict) -> bool:
+    wa, wb = line_words(a), line_words(b)
+    if not wa or not wb:
+        return False
+    if "".join(wa) == "".join(wb):          # "Honig Schätze" == "Honigschätze"
+        return True
+    sa, sb = set(wa), set(wb)
+    return sa <= sb or sb <= sa             # "Full Hair Magic" in "Express Repair Full Hair Magic"
+
+
+def _brand(p: dict) -> str:
+    return re.sub(r"\s+", " ", (p.get("brand") or "").strip().lower())
+
+
+def find_partner(product: dict, rows: list[dict]) -> dict | None:
+    """The matching conditioner for a shampoo (or shampoo for a conditioner): same store, brand and line."""
+    kind = hair_kind(product)
+    if kind not in ("shampoo", "conditioner"):
+        return None
+    want = "conditioner" if kind == "shampoo" else "shampoo"
+    best, best_rank = None, None
+    for other in rows:
+        if other.get("product_id") == product.get("product_id") or other.get("store") != product.get("store"):
+            continue
+        if _brand(other) != _brand(product) or hair_kind(other) != want or other.get("price_eur") is None:
+            continue
+        if other.get("rating") is not None and other["rating"] < PARTNER_MIN_RATING:
+            continue
+        if same_line(product, other):
+            rank = (line_words(other) == line_words(product), other.get("review_count") or 0)
+            if best_rank is None or rank > best_rank:
+                best, best_rank = other, rank
+    return best

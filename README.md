@@ -97,15 +97,21 @@ Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.ven
 ## What gets picked
 
 Customers are Vietnamese girls and young women, from high school to about 35: students and
-young workers buying self-care consumables. Each day 6 drafts, by group (`[groups]` in `config.toml`):
+young workers buying self-care consumables. Each day 10 drafts, by group (`[groups]` in `config.toml`):
 
 | Group | Per day | What | Minimum |
 |---|---|---|---|
-| hair | 3 | shampoo, conditioner, masks, leave-in, oils, styling | 4.2★, 30 reviews |
-| body | 2 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.2★, 30 reviews |
-| extra | 1 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
+| hair | 5 | shampoo, conditioner, masks, leave-in, oils, styling | 4.2★, 30 reviews |
+| body | 3 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.2★, 30 reviews |
+| extra | 2 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
 
 If a group has nothing good enough that day, the best of the others fills the gap.
+
+Shampoo and conditioner are sold as a pair: when a shampoo (or conditioner) is picked, the
+bot looks for its twin of the same brand and line ("Shampoo Traube Hydraboost" +
+"Conditioner Traube Hydraboost"; dm lists them apart). The pair is one post: one caption
+for the set, both bottles in the picture, combined shelf price on the card. With no usable
+twin the product is sold on its own; 2in1 products never need one.
 At most 2 products per brand per day, and no product again within 45 days.
 
 Never picked (`babebasket/catalog.py`):
