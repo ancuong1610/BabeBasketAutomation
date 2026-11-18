@@ -94,9 +94,38 @@ the plain background is used and the card says so. Every paid request is logged 
 Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
 Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.
 
+## What gets picked
+
+Customers are Vietnamese girls and young women, from high school to about 35: students and
+young workers buying self-care consumables. Each day 6 drafts, by group (`[groups]` in `config.toml`):
+
+| Group | Per day | What | Minimum |
+|---|---|---|---|
+| hair | 3 | shampoo, conditioner, masks, leave-in, oils, styling | 4.2★, 30 reviews |
+| body | 2 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.2★, 30 reviews |
+| extra | 1 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
+
+If a group has nothing good enough that day, the best of the others fills the gap.
+At most 2 products per brand per day, and no product again within 45 days.
+
+Never picked (`babebasket/catalog.py`):
+- anything with a flammability or pressure warning (cannot be shipped to Vietnam). For dm this is
+  read from the product page's warnings ("Extrem entzündbares Aerosol…"), so pump sprays stay
+  in. Rossmann pages cannot be read, so Rossmann products named spray or mousse are skipped.
+- dry shampoo, hair spray, accessories (brushes, sponges, hair ties), electrical devices, massage items
+- perfume, except Jean & Len hair perfume
+- supplements that are not for skin, hair, nails or figure
+
+Price: most customers are students, so products over €10 rank lower and over €20 are skipped.
+Gift sets may cost up to €40.
+
+Captions for figure/weight products never use "giảm cân", "giảm mỡ", "đốt mỡ", "tan mỡ" or
+"giảm béo" (Threads and Instagram cut their reach). They are written indirectly and stick
+to the maker's claims.
+
 ## Settings
 
-All in `config.toml`: dm categories, shortlist size and thresholds, preferred brands,
+All in `config.toml`: product groups and their dm categories, shortlist thresholds, preferred brands,
 the pricing rule (exchange rate, shipping, markup), standing coupon per store, LLM model,
 Discord channel and owner.
 

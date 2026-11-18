@@ -1,13 +1,26 @@
 # babe basket pipeline settings. Secrets (API keys, bot token) go in .env, never here.
 
-[dm]
-# Category names exactly as in dm.de's category filter.
-categories = [
-    "Haarkur & Haarmaske", "Leave-In", "Haaröl",
-    "Handcreme & Handmasken", "Bodylotion & Hautcreme",
-    "Vitamine", "Weihnachtliche Geschenksets",
-    "Shampoo", "Haarstyling", "Duschgel", "Zahnpasta",   # verified 2026-11-17: 302 / 226 / 183 / 151 products
-]
+# What the shop sells. Customers: Vietnamese girls/young women (high school to ~35).
+# Each group lists the dm categories to scrape (exact names from dm.de's category filter) and
+# how many drafts per day it gets. babebasket/catalog.py then drops what is never sold
+# (aerosols / flammable, accessories, electrical, perfume except Jean & Len hair perfume,
+# non-beauty supplements) and sorts Rossmann products into the same groups by name.
+[groups.hair]
+per_day = 3
+dm = ["Shampoo", "Conditioner", "Haarkur & Haarmaske", "Leave-In", "Haaröl", "Haarstyling"]
+
+[groups.body]
+per_day = 2
+dm = ["Bodylotion & Hautcreme", "Körperöl", "Deo", "Handcreme & Handmasken", "Fußpflege",
+      "Duschgel", "Körperpeeling & Body Scrub", "Badezusatz & Badesalz", "Intimpflege & -gesundheit"]
+
+[groups.extra]
+# Sun care, skincare, beauty supplements, gift sets, men's products: only very well rated ones.
+per_day = 1
+min_rating = 4.5
+min_reviews = 100
+dm = ["Sonnenpflege", "Gesichtspflege", "Hautbild", "Wohlbefinden & Stärkung", "Abnehmprodukte",
+      "Geschenksets", "Pflegeprodukte für Männer"]
 
 [rossmann]
 # Category page URLs on rossmann.de (no query string). Fill in after running the probe:
@@ -18,9 +31,12 @@ categories = [
 
 
 [shortlist]
-per_day = 6              # products drafted per day
-min_rating = 4.2
+per_day = 6              # products drafted per day (the [groups] quotas add up to this)
+min_rating = 4.2         # hair and body; [groups.extra] is stricter
 min_reviews = 30
+sweet_spot_eur = 10      # students' budget: dearer products rank lower
+max_price_eur = 20       # above this a product is skipped ...
+max_price_gift_set_eur = 40   # ... except gift sets
 repeat_after_days = 45   # don't redraft a product sooner than this
 # Brands the shop already sells get a small boost.
 preferred_brands = ["Balea", "Garnier", "L'ORÉAL", "Elvital", "NIVEA", "Dove", "Doppelherz", "ISANA", "Jean&Len", "Tesori d'Oriente", "KIKO"]

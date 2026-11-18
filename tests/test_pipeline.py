@@ -20,6 +20,13 @@ def product(pid, brand="Balea", rating=4.6, reviews=500, price=2.95, store="dm")
             "categories": "", "image_url": "https://img", "product_url": "https://www.dm.de/p/d/1/"}
 
 
+GROUPS = {"hair": {"per_day": 3}, "body": {"per_day": 2},
+          "extra": {"per_day": 1, "min_rating": 4.5, "min_reviews": 100}}
+SHOP = {**CFG, "groups": GROUPS,
+        "shortlist": {**CFG["shortlist"], "per_day": 6, "sweet_spot_eur": 10, "max_price_eur": 20,
+                      "max_price_gift_set_eur": 40}}
+
+
 class PricingTest(unittest.TestCase):
     def test_quote_rounds_up_to_step(self):
         q = pricing.quote(2.75, "dm", CFG)
@@ -34,26 +41,92 @@ class PricingTest(unittest.TestCase):
         self.assertEqual(q["coupon_pct"], 10)
 
 
+def safe(_product):
+    return True, ""
+
+
+def item(pid, brand, name, cats, rating=4.6, reviews=500, price=3.95, store="dm"):
+    p = product(pid, brand, rating, reviews, price, store)
+    p.update(name=name, categories=cats)
+    return p
+
+
+SHAMPOO = "Shampoo"
+
+
 class ShortlistTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
 
+    def pick(self, cfg=CFG, check=safe, **kw):
+        return [p["product_id"] for p in shortlist.pick(self.conn, cfg, check=check, **kw)]
+
     def test_filters_ranks_and_limits_brand_repeats(self):
+        cfg = {**CFG, "groups": {"hair": {"per_day": 3}}}
         db.upsert_products(self.conn, [
-            product("1", "Balea", 4.8, 2000),
-            product("2", "Balea", 4.7, 1500),
-            product("3", "Balea", 4.7, 1400),   # third Balea: dropped for variety
-            product("4", "Garnier", 4.5, 800),
-            product("5", "Nivea", 4.9, 10),     # too few reviews
-            product("6", "Dove", 3.9, 900),     # rating too low
+            item("1", "Balea", "Shampoo A", SHAMPOO, 4.8, 2000),
+            item("2", "Balea", "Shampoo B", SHAMPOO, 4.7, 1500),
+            item("3", "Balea", "Shampoo C", SHAMPOO, 4.7, 1400),   # third Balea: dropped for variety
+            item("4", "Garnier", "Shampoo D", SHAMPOO, 4.5, 800),
+            item("5", "Nivea", "Shampoo E", SHAMPOO, 4.9, 10),     # too few reviews
+            item("6", "Dove", "Shampoo F", SHAMPOO, 3.9, 900),     # rating too low
         ])
-        picks = [p["product_id"] for p in shortlist.pick(self.conn, CFG)]
-        self.assertEqual(picks, ["1", "2", "4"])
+        self.assertEqual(self.pick(cfg), ["1", "2", "4"])
 
     def test_skips_recently_drafted(self):
-        db.upsert_products(self.conn, [product("1"), product("2", "Garnier")])
+        db.upsert_products(self.conn, [item("1", "Balea", "Shampoo", SHAMPOO), item("2", "Garnier", "Shampoo", SHAMPOO)])
         db.add_draft(self.conn, "dm", "1", {})
-        self.assertEqual([p["product_id"] for p in shortlist.pick(self.conn, CFG)], ["2"])
+        self.assertEqual(self.pick(), ["2"])
+
+    def test_daily_quota_per_group(self):
+        brands = iter(f"B{i}" for i in range(100))
+        rows = [item(f"h{i}", next(brands), f"Haarkur {i}", "Haarkur & Haarmaske", 4.8, 900 - i) for i in range(5)]
+        rows += [item(f"b{i}", next(brands), f"Bodylotion {i}", "Bodylotion & Hautcreme", 4.7, 800 - i) for i in range(5)]
+        rows += [item(f"e{i}", next(brands), f"Tagescreme {i}", "Gesichtspflege; Tagescreme", 4.8, 700 - i) for i in range(5)]
+        db.upsert_products(self.conn, rows)
+        self.assertEqual(self.pick(SHOP), ["h0", "h1", "h2", "b0", "b1", "e0"])
+
+    def test_empty_group_is_filled_from_the_others(self):
+        brands = iter(f"B{i}" for i in range(100))
+        rows = [item(f"h{i}", next(brands), f"Shampoo {i}", SHAMPOO, 4.8, 900 - i) for i in range(8)]
+        db.upsert_products(self.conn, rows)
+        self.assertEqual(len(self.pick(SHOP)), 6)
+
+    def test_extra_group_needs_very_good_ratings(self):
+        db.upsert_products(self.conn, [
+            item("ok", "A", "Tagescreme", "Gesichtspflege", 4.6, 150),
+            item("low", "B", "Serum", "Gesichtspflege; Serum & Kur", 4.4, 5000),   # below 4.5★
+            item("few", "C", "Nachtcreme", "Gesichtspflege", 4.9, 60),             # below 100 reviews
+        ])
+        self.assertEqual(self.pick(SHOP), ["ok"])
+
+    def test_price_cap_and_gift_set_exception(self):
+        db.upsert_products(self.conn, [
+            item("dear", "A", "Shampoo Luxus", SHAMPOO, 4.9, 3000, price=24.95),
+            item("gift", "B", "Geschenkset Haarpflege", "Geschenksets", 4.9, 3000, price=29.95),
+        ])
+        self.assertEqual(self.pick(SHOP), ["gift"])
+
+    def test_cheaper_ranks_above_dearer_at_equal_reviews(self):
+        db.upsert_products(self.conn, [
+            item("dear", "A", "Shampoo 1", SHAMPOO, 4.7, 1000, price=14.95),
+            item("cheap", "B", "Shampoo 2", SHAMPOO, 4.7, 1000, price=4.95),
+        ])
+        self.assertEqual(self.pick(SHOP), ["cheap", "dear"])
+
+    def test_never_sold_types_are_left_out(self):
+        db.upsert_products(self.conn, [
+            item("dry", "A", "Trockenshampoo", "Haarstyling", 4.9, 3000),
+            item("brush", "B", "Haarbürste", "Haarpflege", 4.9, 3000),
+            item("vit", "C", "Vitamin D3 Tabletten", "Vitamine", 4.9, 3000),
+            item("perf", "D", "Eau de Parfum", "Parfum", 4.9, 3000),
+            item("jl", "Jean&Len", "Haarparfum Rose", "Haarstyling", 4.9, 3000),
+        ])
+        self.assertEqual(self.pick(SHOP), ["jl"])
+
+    def test_flammable_products_are_skipped(self):
+        db.upsert_products(self.conn, [item("1", "A", "Shampoo", SHAMPOO), item("2", "B", "Shampoo", SHAMPOO)])
+        self.assertEqual(self.pick(SHOP, check=lambda p: (p["product_id"] != "1", "flammable")), ["2"])
 
     def test_many_reviews_beat_few_perfect_ones(self):
         self.assertGreater(shortlist.score(4.6, 3000, "", []), shortlist.score(5.0, 31, "", []))
@@ -141,6 +214,18 @@ class LlmOutputTest(unittest.TestCase):
         self.assertIn("caption 1 uses 'tiền'", problems)
         for i in (2, 3, 4, 5):
             self.assertIn(f"caption {i} mentions a price; captions must not contain prices", problems)
+
+    def test_weight_loss_words_are_refused(self):
+        for text in ["Giúp giảm cân nhanh", "đốt mỡ bụng", "giảm  mỡ hiệu quả", "tan mỡ", "Weight loss"]:
+            bad = {**GOOD_DRAFT, "captions": [{"style": "a", "text": text}] * 3}
+            self.assertTrue(any("sensitive word" in p for p in llm.validate(bad)), text)
+        ok = {**GOOD_DRAFT, "captions": [{"style": "a", "text": "Giữ dáng nhẹ nhàng, cảm giác no lâu"}] * 3}
+        self.assertEqual(llm.validate(ok), [])
+
+    def test_prompt_describes_the_audience(self):
+        system = llm.build_messages(product("1"), {}, [])[0]["content"]
+        self.assertIn("học sinh cấp 3", system)
+        self.assertIn("giảm cân", system)   # named as a forbidden word
 
     def test_sizes_are_not_mistaken_for_prices(self):
         ok = {**GOOD_DRAFT, "captions": [{"style": "a", "text": "Hũ 400ml, 10% Glycerin, 3.600 đánh giá 4.8 sao"}] * 3}

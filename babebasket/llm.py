@@ -18,6 +18,9 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 SYSTEM_PROMPT = """Bạn là người viết nội dung cho "babe basket", một shop online ở Hà Nội bán đồ chăm sóc bản thân \
 được tuyển chọn từ các drugstore ở Đức (dm, Rossmann). Khách đặt trước, hàng về sau 3–4 tuần, cọc 50%.
 
+Khách hàng: con gái Việt Nam từ học sinh cấp 3 đến khoảng 30–35 tuổi (học sinh, sinh viên, người mới đi làm), \
+quan tâm làm đẹp, dưỡng da, chăm tóc, chăm body. Viết cho đúng đối tượng này.
+
 Giọng văn caption (tiếng Việt):
 - Nhẹ nhàng, thân mật như nói chuyện với bạn, vài emoji, dùng "nhé", "nhá", "nha", "nè".
 - Gọi người đọc là "các babe" hoặc "các bà"; shop tự xưng "sốp" hoặc "tui".
@@ -31,6 +34,10 @@ Giọng văn caption (tiếng Việt):
 - Chỉ dựa vào công dụng do nhà sản xuất công bố và review được cung cấp. Thực phẩm chức năng/thuốc: chỉ nhắc \
   công dụng nhà sản xuất công bố, không hứa hẹn chữa bệnh.
 - Nghĩ đến khách Việt: khí hậu nóng ẩm, nắng, nước cứng/clo, thói quen hằng ngày.
+- Sản phẩm hỗ trợ vóc dáng / kiểm soát cân nặng: viết thật khéo, TUYỆT ĐỐI không dùng các từ "giảm cân", \
+  "giảm mỡ", "đốt mỡ", "tan mỡ", "giảm béo" (Threads/Instagram sẽ bóp tương tác). Nói gián tiếp, ví dụ \
+  "giữ dáng", "cảm giác no lâu", "eo gọn hơn khi kết hợp ăn uống lành mạnh", và chỉ theo đúng công dụng \
+  nhà sản xuất ghi. Không nhắm tới học sinh.
 - Nhãn trên ảnh (labels) và caption chỉ bằng tiếng Việt, không để lại từ tiếng Đức (Keratin, Vitamin C… thì được).
 - Thiên về bán hàng, kết bằng một lời rủ nhẹ nhàng (inbox sốp để hỏi giá/order nha).
 
@@ -145,6 +152,10 @@ def parse_json_reply(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
+# Words Threads/Instagram punish: weight-loss products must be described indirectly.
+SENSITIVE = re.compile(r"giảm\s*cân|giảm\s*mỡ|đốt\s*(cháy\s*)?mỡ|tan\s*mỡ|giảm\s*béo|weight\s*loss", re.I)
+
+
 def validate(draft: dict) -> list[str]:
     """Problems that must be fixed before the draft is usable."""
     problems = []
@@ -158,6 +169,9 @@ def validate(draft: dict) -> list[str]:
         text = c.get("text", "")
         if re.search(r"\btiền\b", text, re.I):
             problems.append(f"caption {i} uses 'tiền'")
+        sensitive = SENSITIVE.search(text)
+        if sensitive:
+            problems.append(f"caption {i} uses the sensitive word '{sensitive.group(0)}'; say it indirectly")
         if "{PRICE}" in text or re.search(r"\d+[.,]?\d*\s*(€|🐠|(eur|đ|vnđ|vnd|k|nghìn|ngàn)\b)", text, re.I):
             problems.append(f"caption {i} mentions a price; captions must not contain prices")
     return problems

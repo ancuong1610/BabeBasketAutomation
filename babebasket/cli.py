@@ -26,9 +26,16 @@ from babebasket.config import DATA
 from babebasket.stores import dm, rossmann
 
 
+def dm_categories(cfg: dict) -> list[str]:
+    """dm categories to scrape: every group's list (plus a legacy [dm] categories list), no repeats."""
+    names = [c for g in cfg.get("groups", {}).values() for c in g.get("dm", [])]
+    names += cfg.get("dm", {}).get("categories", [])
+    return list(dict.fromkeys(names))
+
+
 def cmd_scrape(cfg: dict, conn) -> None:
     all_rows = []
-    for category in cfg["dm"]["categories"]:
+    for category in dm_categories(cfg):
         rows = dm.crawl_category(category)
         print(f"dm  {category}: {len(rows)} products")
         if not rows:
@@ -56,7 +63,7 @@ def cmd_shortlist(cfg: dict, conn) -> list[dict]:
     picks = shortlist.pick(conn, cfg)
     for p in picks:
         q = pricing.quote(p["price_eur"], p["store"], cfg)
-        print(f"{p['score']:6.2f}  {p['store']:8} {p['brand'][:20]:20} €{p['price_eur']:<6} → {q['sale_k']}🐠  "
+        print(f"{p['score']:6.2f}  {p['group']:5} {p['store']:8} {p['brand'][:20]:20} €{p['price_eur']:<6}  "
               f"{p['rating']:.2f}★ {p['review_count']:>5}  {p['name'][:50]}")
     return picks
 
