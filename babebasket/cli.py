@@ -280,14 +280,17 @@ def cmd_check_images(cfg: dict, conn) -> None:
 
     channel = cfg["discord"]["channel_id"]
     owners = cfg["discord"].get("owner_user_ids", [])
-    for row in db.drafts(conn, "image_pending"):
+    waiting = db.drafts(conn, "image_pending")
+    for row in waiting:
         payload = json.loads(row["payload"])
         message_id = payload.get("image_message_id")
         if not message_id:
             continue
         try:
             decision = discord.read_image_decision(channel, message_id, owners)
-            notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"))
+            # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
+            notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),
+                                                accept_plain=len(waiting) == 1)
             if notes["last_id"]:
                 payload["feedback_seen"] = notes["last_id"]
                 db.set_payload(conn, row["id"], payload)

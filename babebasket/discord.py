@@ -120,7 +120,7 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
                      reply_to: str | None = None) -> dict:
     kind = "" if source == "gemini" else " (plain background)"
     if edits_left > 0:
-        edit = f"✏️ edit: **reply to this message** with what to change ({edits_left} left)"
+        edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
     else:
         edit = "✏️ no edits left"
     content = f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
@@ -195,8 +195,12 @@ def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> 
     return None
 
 
-def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None) -> dict:
+def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None,
+                        accept_plain: bool = False) -> dict:
     """Owner's text replies to the image card, newer than message id `after`.
+
+    With `accept_plain` (only one image card is waiting), a plain message typed into the
+    channel after the card also counts, so the owner does not have to use Discord's reply.
 
     Returns {"text": joined replies, "last_id": newest reply id or None, "unreadable": bool}.
     `unreadable` means a reply exists but Discord hid its text: the bot needs the
@@ -206,7 +210,8 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
     owner_set = {str(o) for o in owners}
     texts, last_id, unreadable = [], None, False
     for m in sorted(messages, key=lambda m: int(m["id"])):
-        if (m.get("message_reference") or {}).get("message_id") != message_id:
+        ref = (m.get("message_reference") or {}).get("message_id")
+        if ref != message_id and not (accept_plain and ref is None):
             continue
         author = m.get("author") or {}
         if author.get("bot") or (owner_set and str(author.get("id")) not in owner_set):

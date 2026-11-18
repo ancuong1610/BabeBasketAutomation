@@ -267,6 +267,13 @@ class ReadFeedbackTest(unittest.TestCase):
         self.assertIn("after=10", call.call_args.args[1])
         self.assertEqual(notes, {"text": "to hơn / nền sáng hơn", "last_id": "12", "unreadable": False})
 
+    def test_plain_message_counts_only_when_allowed(self):
+        msgs = [{"id": "11", "content": "làm sản phẩm to ra", "author": {"id": "42"}}]
+        with mock.patch.object(discord, "_call", return_value=msgs):
+            self.assertEqual(discord.read_image_feedback("CH", "IMG", [])["text"], "")
+            self.assertEqual(discord.read_image_feedback("CH", "IMG", [], accept_plain=True)["text"],
+                             "làm sản phẩm to ra")
+
     def test_empty_content_means_intent_missing(self):
         msgs = [{"id": "11", "content": "", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}}]
         with mock.patch.object(discord, "_call", return_value=msgs):
@@ -289,7 +296,7 @@ class ImageDecisionTest(unittest.TestCase):
     def test_image_card_has_only_accept_reject_edit(self):
         product = {"store": "dm", "brand": "B", "name": "N"}
         card = discord.build_image_card(3, product, "gemini", 2, reply_to="CAP")["content"]
-        for word in ("✅ accept", "❌ reject", "✏️ edit", "reply to this message", "2 left"):
+        for word in ("✅ accept", "❌ reject", "✏️ edit", "reply", "2 left"):
             self.assertIn(word, card)
         self.assertNotIn("🔄", card)
         self.assertNotIn("⬜", card)
