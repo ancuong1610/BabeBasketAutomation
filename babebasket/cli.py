@@ -4,7 +4,8 @@
     python3 -m babebasket shortlist         # show today's picks
     python3 -m babebasket draft             # details + reviews + LLM drafts for the shortlist
     python3 -m babebasket post              # send drafted cards to Discord
-    python3 -m babebasket check             # read approvals from Discord
+    python3 -m babebasket check             # read approvals from Discord, then publish approved drafts
+    python3 -m babebasket publish           # publish approved drafts to Threads ([threads].enabled)
     python3 -m babebasket daily             # scrape + draft + post
     python3 -m babebasket try dm 3050111    # one product end to end, printed (no Discord)
     python3 -m babebasket try dm 3050111 --image   # ... and render the post image
@@ -198,6 +199,61 @@ def cmd_check(cfg: dict, conn) -> None:
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
 
 
+MAX_PUBLISH_ATTEMPTS = 3
+
+
+def cmd_publish(cfg: dict, conn) -> None:
+    """Post approved drafts to Threads. Each draft is isolated: one failure never blocks the others."""
+    from babebasket import discord, threads
+
+    if not cfg.get("threads", {}).get("enabled"):
+        return
+    channel = cfg["discord"]["channel_id"]
+    rows = db.drafts(conn, "approved")
+    try:
+        if threads.maybe_refresh():
+            print("threads token refreshed")
+    except Exception as err:  # an old token still works until it expires; say so and carry on
+        print(f"! threads token refresh failed: {err}", file=sys.stderr)
+    for row in rows:
+        payload = json.loads(row["payload"])
+        captions = payload["draft"].get("captions", [])
+        idx = (row["chosen_caption"] or 1) - 1
+        text = captions[idx]["text"] if 0 <= idx < len(captions) else ""
+        if not text or len(text) > threads.MAX_CHARS:
+            reason = f"caption {idx + 1} is {len(text)} characters; Threads allows {threads.MAX_CHARS}"
+            db.set_status(conn, row["id"], "publish_failed")
+            discord.reply(channel, row["discord_message_id"], f"⚠️ Draft #{row['id']} not posted: {reason}.")
+            print(f"! draft #{row['id']}: {reason}", file=sys.stderr)
+            continue
+        try:
+            image_url = discord.card_image_url(channel, row["discord_message_id"])
+            post = threads.publish(text, image_url)
+        except Exception as err:
+            attempts = payload.get("publish_attempts", 0) + 1
+            payload["publish_attempts"] = attempts
+            db.set_payload(conn, row["id"], payload)
+            final = attempts >= MAX_PUBLISH_ATTEMPTS
+            if final:
+                db.set_status(conn, row["id"], "publish_failed")
+            note = "giving up" if final else f"will retry ({attempts}/{MAX_PUBLISH_ATTEMPTS})"
+            try:
+                discord.reply(channel, row["discord_message_id"],
+                              f"⚠️ Draft #{row['id']} Threads post failed, {note}: {str(err)[:300]}")
+            except Exception:
+                pass
+            print(f"! draft #{row['id']} publish failed ({attempts}): {err}", file=sys.stderr)
+            continue
+        payload["threads"] = {**post, "published_at": db.now()}
+        db.set_payload(conn, row["id"], payload)
+        db.set_status(conn, row["id"], "published")
+        print(f"draft #{row['id']}: published {post['permalink']}")
+        try:
+            discord.reply(channel, row["discord_message_id"], f"🧵 Draft #{row['id']} is live on Threads: {post['permalink']}")
+        except Exception as err:
+            print(f"! reply for draft #{row['id']}: {err}", file=sys.stderr)
+
+
 def rossmann_product(page_path, ean: str | None) -> dict:
     """A product row from a Rossmann category page saved to disk (no network)."""
     rows = rossmann.parse_page(Path(page_path).read_text(), db.now())
@@ -255,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--limit", type=int)
     sub.add_parser("post")
     sub.add_parser("check")
+    sub.add_parser("publish")
     sub.add_parser("daily")
     nt = sub.add_parser("notify", help="post a message to the approval channel")
     nt.add_argument("text")
@@ -286,6 +343,9 @@ def main(argv: list[str] | None = None) -> int:
         cmd_post(cfg, conn)
     elif args.cmd == "check":
         cmd_check(cfg, conn)
+        cmd_publish(cfg, conn)
+    elif args.cmd == "publish":
+        cmd_publish(cfg, conn)
     elif args.cmd == "daily":
         cmd_scrape(cfg, conn)
         cmd_draft(cfg, conn, None)

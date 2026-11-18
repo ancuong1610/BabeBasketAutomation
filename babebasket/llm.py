@@ -71,7 +71,7 @@ Chữ trên ảnh (labels): mode = "usage" cho đồ tóc, tạo kiểu, ủ, se
 points = cách dùng ngắn + kết quả. mode = "benefits" cho kem đánh răng, dưỡng thể, sữa tắm, kem tay, \
 thực phẩm chức năng…: points = công dụng/thành phần, không hướng dẫn cách dùng.
 Bốn caption phải thật sự khác nhau. Caption "engagement question" là bài tương tác mềm, không bán trực tiếp. \
-Mỗi caption 2–5 câu.{extra}"""
+Mỗi caption 2–5 câu, tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
 
 HANOI_SEASON = {
     1: "đông, lạnh khô", 2: "cuối đông, nồm ẩm", 3: "xuân, nồm ẩm", 4: "xuân, ấm dần", 5: "đầu hè, nóng",
@@ -189,6 +189,8 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
     for i, c in enumerate(draft.get("captions", []), 1):
         if c.get("style") != "engagement question" and "{PRICE}" not in c.get("text", ""):
             out.append(f"caption {i} has no price")
+        if len(c.get("text", "")) > 500:
+            out.append(f"caption {i} is too long for Threads ({len(c.get('text', ''))}/500)")
     raw = draft.get("labels") if isinstance(draft.get("labels"), dict) else {}
     if raw.get("mode") not in ("usage", "benefits"):
         out.append("labels.mode must be benefits or usage")

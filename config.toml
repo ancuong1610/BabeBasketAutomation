@@ -47,6 +47,11 @@ temperature = 0.8
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
 owner_user_ids = ["420952578491285515"]      # only these users' reactions count; empty = any non-bot user
 
+[threads]
+# Post approved drafts (✅ + caption number on Discord) to the Threads account of THREADS_ACCESS_TOKEN.
+# The token is renewed automatically every 7 days; a new token pasted into .env always wins.
+enabled = true
+
 [image]
 # Gemini image model on OpenRouter that puts the packshot in a hand in a drugstore aisle.
 # Switch to "google/gemini-3-pro-image" for higher quality (costs more). enabled = false -> plain background.

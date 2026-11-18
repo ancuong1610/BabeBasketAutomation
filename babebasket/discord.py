@@ -144,3 +144,16 @@ def reply(channel_id: str, message_id: str, text: str) -> None:
         f"/channels/{channel_id}/messages",
         {"content": text, "message_reference": {"message_id": message_id}, "allowed_mentions": {"parse": []}},
     )
+
+
+def card_image_url(channel_id: str, message_id: str) -> str | None:
+    """Fresh public CDN link of the card's post image (Discord links are signed and expire, so fetch at use time)."""
+    message = _call("GET", f"/channels/{channel_id}/messages/{message_id}") or {}
+    for att in message.get("attachments") or []:
+        if att.get("url"):
+            return att["url"]
+    for embed in message.get("embeds") or []:
+        url = (embed.get("image") or {}).get("url")
+        if url:
+            return url
+    return None
