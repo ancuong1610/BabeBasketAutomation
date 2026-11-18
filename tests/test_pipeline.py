@@ -304,8 +304,9 @@ class BuildImageTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _gen(self, result):
-        def gen(packshot, product, cfg):
+        def gen(packshot, product, cfg, **kw):
             self.gen_calls.append(product["product_id"])
+            self.gen_kwargs = kw
             return result
         return gen
 
@@ -317,6 +318,24 @@ class BuildImageTest(unittest.TestCase):
         self.assertEqual(path, str(self.out))
         self.assertTrue(self.out.exists())
         self.assertEqual((payload["image_path"], payload["image_source"]), (str(self.out), "gemini"))
+
+    def test_build_image_keeps_the_raw_scene_and_passes_the_fix(self):
+        from pathlib import Path
+
+        from babebasket import cli
+
+        payload = dict(IMAGE_PAYLOAD)
+        cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(),
+                        gen=self._gen(_png((9, 9, 9), (928, 1152))), feedback="brighter", previous=b"prev")
+        self.assertEqual(self.gen_kwargs, {"feedback": "brighter", "previous": b"prev"})
+        self.assertTrue(Path(payload["scene_path"]).exists())
+        self.assertNotEqual(payload["scene_path"], payload["image_path"])
+
+    def test_build_image_without_fix_passes_no_extras(self):
+        from babebasket import cli
+
+        cli.build_image(dict(IMAGE_PAYLOAD), self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(None))
+        self.assertEqual(self.gen_kwargs, {})
 
     def test_build_image_fallback_when_scene_none(self):
         from babebasket import cli

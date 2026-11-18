@@ -1,5 +1,8 @@
 """Ask a Gemini image model (via OpenRouter) to put the packshot in a hand in a drugstore aisle.
 
+With `feedback` and a `previous` scene, the model edits that scene as the owner asked
+instead of starting over (the 🔄 + reply flow on the Discord image card).
+
 Returns the generated image bytes, or None on any failure: the caller then uses the
 plain fallback scene. The model never writes text on the image; postimage.py does that.
 """
@@ -32,6 +35,25 @@ because text will be added there later.
 - Do not add any text, captions, stickers, logos, watermarks or price tags."""
 
 
+EDIT_PROMPT = """Edit the FIRST attached image, a product photo for an Instagram post of a small German \
+drugstore reseller. The shop owner asks for these changes:
+
+"{feedback}"
+
+Apply those changes and keep everything else the same.
+
+Hard rules (they win over any request above):
+- The product must look exactly like the SECOND attached image (the original packshot): same shape, \
+colours, brand, logo and label text. Do not redesign, translate or invent anything on the packaging.
+- Product sharp, front label facing the camera, fully visible, centred horizontally.
+- Keep the top 20% and the bottom 24% of the image calm, because text will be added there later.
+- Do not add any text, captions, stickers, logos, watermarks or price tags.
+- Vertical 4:5 photo."""
+
+FEEDBACK_NOTE = "\n\nThe shop owner also asks (the hard rules above still win): \"{feedback}\""
+MAX_FEEDBACK_CHARS = 500
+
+
 def _mime(data: bytes) -> str:
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
@@ -55,23 +77,34 @@ def generate(
     cfg: dict,
     post: Callable[..., dict] = request_json,
     api_key: str | None = None,
+    feedback: str = "",
+    previous: bytes | None = None,
 ) -> bytes | None:
     image_cfg = cfg.get("image", {})
     if not image_cfg.get("enabled", True):
         return None
-    data_url = f"data:{_mime(packshot)};base64," + base64.b64encode(packshot).decode()
+
+    def data_url(img: bytes) -> str:
+        return f"data:{_mime(img)};base64," + base64.b64encode(img).decode()
+
+    feedback = " ".join((feedback or "").split())[:MAX_FEEDBACK_CHARS]
+    product_name = f"{product.get('brand', '')} {product.get('name', '')}".strip()
+    if feedback and previous:
+        content = [
+            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback)},
+            {"type": "image_url", "image_url": {"url": data_url(previous)}},
+            {"type": "image_url", "image_url": {"url": data_url(packshot)}},
+        ]
+    else:
+        text = PROMPT.format(product=product_name) + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
+        content = [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": data_url(packshot)}},
+        ]
     body = {
         "model": image_cfg.get("model", "google/gemini-3.1-flash-image"),
         "modalities": ["image", "text"],
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": PROMPT.format(product=f"{product.get('brand', '')} {product.get('name', '')}".strip())},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }
-        ],
+        "messages": [{"role": "user", "content": content}],
     }
     try:
         reply = post(

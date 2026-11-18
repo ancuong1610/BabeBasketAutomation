@@ -3,7 +3,8 @@
 Two steps per post:
 1. Caption card (store packshot, captions): tap 1️⃣–4️⃣ for the caption, ✅ to approve, ❌ to reject.
 2. Image card (the AI post image, made only after step 1): ✅ use it, 🔄 make a new one,
-   ⬜ use the plain background instead, ❌ drop the post.
+   ⬜ use the plain background instead, ❌ drop the post. A text reply to the image card
+   ("product bigger, brighter shelf") makes the AI edit that image as asked.
 `check` reads the reactions back.
 """
 
@@ -121,6 +122,8 @@ def build_image_card(draft_id: int, product: dict, source: str, ai_tries_left: i
     actions = "✅ use this image · " + (f"🔄 new AI image ({ai_tries_left} left) · " if ai_tries_left > 0 else "") \
         + ("⬜ plain background · " if source == "gemini" else "") + "❌ drop the post"
     content = f"🖼️ **Draft #{draft_id}** post image ({kind}): {actions}"
+    if ai_tries_left > 0:
+        content += "\n💬 Or **reply to this message** with what to fix (e.g. \"sản phẩm to hơn, nền sáng hơn\")."
     if note:
         content += f"\n{note}"
     card = {
@@ -188,6 +191,31 @@ def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> 
         if emoji in taps:
             return decision
     return None
+
+
+def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None) -> dict:
+    """Owner's text replies to the image card, newer than message id `after`.
+
+    Returns {"text": joined replies, "last_id": newest reply id or None, "unreadable": bool}.
+    `unreadable` means a reply exists but Discord hid its text: the bot needs the
+    Message Content Intent (Developer Portal -> Bot -> Privileged Gateway Intents).
+    """
+    messages = _call("GET", f"/channels/{channel_id}/messages?after={after or message_id}&limit=50") or []
+    owner_set = {str(o) for o in owners}
+    texts, last_id, unreadable = [], None, False
+    for m in sorted(messages, key=lambda m: int(m["id"])):
+        if (m.get("message_reference") or {}).get("message_id") != message_id:
+            continue
+        author = m.get("author") or {}
+        if author.get("bot") or (owner_set and str(author.get("id")) not in owner_set):
+            continue
+        last_id = m["id"]
+        content = (m.get("content") or "").strip()
+        if content:
+            texts.append(content)
+        else:
+            unreadable = True
+    return {"text": " / ".join(texts), "last_id": last_id, "unreadable": unreadable and not texts}
 
 
 def reply(channel_id: str, message_id: str, text: str) -> None:

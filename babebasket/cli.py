@@ -89,12 +89,15 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
-def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None, ai: bool = True) -> str | None:
+def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None, ai: bool = True,
+                feedback: str = "", previous: bytes | None = None) -> str | None:
     """Render the post image for a draft payload. Returns the file path, or None if there is no packshot.
 
     With ai=True: Gemini scene first; if it fails or returns something that is not an image,
     the plain fallback background is used. With ai=False: plain background only (free).
-    Sets payload["image_path"] and payload["image_source"].
+    `feedback` (+ the `previous` AI scene) asks the model to fix that scene instead of starting over.
+    Sets payload["image_path"], payload["image_source"] and, for AI images, payload["scene_path"]
+    (the scene without text, kept so a later fix can edit it).
     """
     import io
 
@@ -113,7 +116,8 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         return None
     labels = llm.image_labels(payload["draft"])
     source, base = "fallback", None
-    generated = gen(packshot, product, cfg) if ai else None
+    extra = {k: v for k, v in (("feedback", feedback), ("previous", previous)) if v}
+    generated = gen(packshot, product, cfg, **extra) if ai else None
     if generated:
         try:
             base = Image.open(io.BytesIO(generated))
@@ -124,6 +128,11 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
             base = None
     if base is None:
         base = postimage.fallback_scene(packshot)
+    if source == "gemini":
+        scene_path = Path(out).with_name(Path(out).stem + "-scene.png")
+        scene_path.parent.mkdir(parents=True, exist_ok=True)
+        base.save(scene_path, "PNG")
+        payload["scene_path"] = str(scene_path)
     path = postimage.save(postimage.render(base, labels), out)
     payload["image_path"], payload["image_source"] = str(path), source
     return str(path)
@@ -206,8 +215,11 @@ def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
     return max(0, min(per_post, per_day))
 
 
-def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "") -> None:
-    """Make the post image (AI if allowed, else plain) and send it to Discord for approval."""
+def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "", feedback: str = "") -> None:
+    """Make the post image (AI if allowed, else plain) and send it to Discord for approval.
+
+    With `feedback`, the previous AI scene (if any) is edited as asked instead of starting over.
+    """
     from babebasket import discord
 
     draft_id = row["id"]
@@ -223,12 +235,19 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         return
     version = payload.get("image_versions", 0) + 1
     old_ai_image = payload.get("image_path") if payload.get("image_source") == "gemini" else None
-    if ai and version == 1 and old_ai_image and Path(old_ai_image).exists():
+    if ai and not feedback and version == 1 and old_ai_image and Path(old_ai_image).exists():
         # Drafted under the old flow, which already paid for an AI image: show that one first.
         payload["image_versions"] = version
         use_ai, path = False, old_ai_image
     else:
-        path = build_image(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg", cfg, ai=use_ai)
+        previous = None
+        scene_path = payload.get("scene_path")
+        if feedback and use_ai and payload.get("image_source") == "gemini" and scene_path and Path(scene_path).exists():
+            previous = Path(scene_path).read_bytes()
+        path = build_image(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg", cfg, ai=use_ai,
+                           feedback=feedback if use_ai else "", previous=previous)
+        if feedback and use_ai:
+            notes.insert(0, f"✏️ {'Edited' if previous else 'New image'} with your note: “{feedback[:300]}”")
     if path is None:  # photo download failed: nothing was paid for; stay put and retry on the next check
         raise RuntimeError("product photo download failed; will retry")
     payload["image_versions"] = version
@@ -266,20 +285,39 @@ def cmd_check_images(cfg: dict, conn) -> None:
         message_id = payload.get("image_message_id")
         if not message_id:
             continue
-        decision = discord.read_image_decision(channel, message_id, owners)
-        if decision is None:
-            continue
         try:
-            if decision == "accept":
-                db.set_status(conn, row["id"], "ready", decided_at=db.now())
-                discord.reply(channel, message_id, f"✅ Image for draft #{row['id']} approved. Queued for posting.")
-            elif decision == "reject":
+            decision = discord.read_image_decision(channel, message_id, owners)
+            notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"))
+            if notes["last_id"]:
+                payload["feedback_seen"] = notes["last_id"]
+                db.set_payload(conn, row["id"], payload)
+            if notes["unreadable"] and decision != "reject":
+                discord.reply(channel, message_id,
+                              "⚠️ I can't read your reply: turn on **Message Content Intent** for the bot "
+                              "(Discord Developer Portal → Bot → Privileged Gateway Intents), then reply again.")
+            feedback = notes["text"]
+
+            if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
                 discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+            elif feedback:  # a written fix wins over the taps: make the image again as asked
+                if ai_tries_left(cfg, conn, row["id"]) > 0:
+                    decision = "fix"
+                    send_image_card(cfg, conn, row, payload, ai=True, feedback=feedback)
+                else:
+                    decision = "fix refused"
+                    discord.reply(channel, message_id,
+                                  "⚠️ No AI image tries left for this post (see [image] in config.toml). "
+                                  "Tap ✅, ⬜ or ❌ instead.")
+            elif decision == "accept":
+                db.set_status(conn, row["id"], "ready", decided_at=db.now())
+                discord.reply(channel, message_id, f"✅ Image for draft #{row['id']} approved. Queued for posting.")
             elif decision == "retry":
                 send_image_card(cfg, conn, row, payload, ai=True)
-            else:  # plain
+            elif decision == "plain":
                 send_image_card(cfg, conn, row, payload, ai=False)
+            else:
+                continue
         except Exception as err:
             print(f"! image decision for draft #{row['id']}: {err}", file=sys.stderr)
             continue

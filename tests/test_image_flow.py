@@ -25,12 +25,23 @@ def caption_approved(conn, product_id="1"):
 
 class FlowTest(unittest.TestCase):
     def setUp(self):
+        import tempfile
+
         self.conn = db.connect(":memory:")
         self.builds, self.cards, self.replies = [], [], []
+        self.tmp = tempfile.TemporaryDirectory()
+        self.scene_file = f"{self.tmp.name}/scene.png"
+        with open(self.scene_file, "wb") as fh:
+            fh.write(b"previous-scene")
+
+        self.build_kwargs = []
 
         def fake_build(payload, out, cfg, ai=True, **kw):
             self.builds.append(ai)
+            self.build_kwargs.append(kw)
             payload["image_path"], payload["image_source"] = str(out), "gemini" if ai else "fallback"
+            if ai:
+                payload["scene_path"] = self.scene_file
             return str(out)
 
         def fake_post_image_card(channel, card, path, tries, source):
@@ -48,14 +59,19 @@ class FlowTest(unittest.TestCase):
     def tearDown(self):
         for p in self.patches:
             p.stop()
+        self.tmp.cleanup()
 
     def row(self, draft_id):
         r = self.conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
         return r["status"], json.loads(r["payload"])
 
-    def decide(self, decision):
-        with mock.patch.object(discord, "read_image_decision", return_value=decision):
-            cli.cmd_check_images(CFG, self.conn)
+    def decide(self, decision, feedback="", last_id=None, unreadable=False, cfg=CFG):
+        notes = {"text": feedback, "last_id": last_id or ("R1" if feedback or unreadable else None),
+                 "unreadable": unreadable}
+        with mock.patch.object(discord, "read_image_decision", return_value=decision), \
+                mock.patch.object(discord, "read_image_feedback", return_value=notes) as fb:
+            cli.cmd_check_images(cfg, self.conn)
+        return fb
 
     def test_draft_makes_no_image(self):
         product = {"store": "dm", "product_id": "1", "brand": "B", "name": "N"}
@@ -166,6 +182,93 @@ class FlowTest(unittest.TestCase):
             cli.cmd_publish(CFG, self.conn)
         url.assert_called_once_with("CH", "IMG1")
         self.assertEqual(self.row(draft_id)[0], "published")
+
+
+class FixByReplyTest(FlowTest):
+    """Owner replies to the image card with what to change."""
+
+    def test_reply_edits_the_previous_ai_scene(self):
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide(None, feedback="sản phẩm to hơn")
+        status, payload = self.row(draft_id)
+        self.assertEqual(status, "image_pending")
+        self.assertEqual(payload["image_message_id"], "IMG2")
+        self.assertEqual(self.build_kwargs[1]["feedback"], "sản phẩm to hơn")
+        self.assertEqual(self.build_kwargs[1]["previous"], b"previous-scene")
+        self.assertIn("Edited with your note", self.cards[1]["card"]["content"])
+        self.assertEqual(payload["feedback_seen"], "R1")
+
+    def test_reply_wins_over_a_tick(self):
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide("accept", feedback="brighter")
+        self.assertEqual(self.row(draft_id)[0], "image_pending")
+        self.assertEqual(len(self.cards), 2)
+
+    def test_reject_wins_over_a_reply(self):
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide("reject", feedback="brighter")
+        self.assertEqual(self.row(draft_id)[0], "rejected")
+        self.assertEqual(len(self.cards), 1)
+
+    def test_reply_on_plain_image_makes_a_new_ai_image_with_the_note(self):
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide("plain")
+        self.decide(None, feedback="hand on the left")
+        self.assertEqual(self.builds, [True, False, True])
+        self.assertEqual(self.build_kwargs[2]["feedback"], "hand on the left")
+        self.assertIsNone(self.build_kwargs[2]["previous"])   # nothing AI-made to edit
+        self.assertIn("New image with your note", self.cards[2]["card"]["content"])
+
+    def test_reply_with_no_tries_left_explains_once(self):
+        cfg = {**CFG, "image": {"enabled": True, "max_per_day": 6, "max_per_post": 1}}
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(cfg, self.conn)
+        self.decide(None, feedback="brighter", cfg=cfg)
+        self.assertEqual(self.builds, [True])
+        self.assertIn("No AI image tries left", self.replies[-1])
+        self.assertEqual(self.row(draft_id)[1]["feedback_seen"], "R1")
+
+    def test_seen_replies_are_not_read_again(self):
+        draft_id = caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        payload = self.row(draft_id)[1]
+        payload["feedback_seen"] = "R9"
+        db.set_payload(self.conn, draft_id, payload)
+        fb = self.decide(None)
+        self.assertEqual(fb.call_args.kwargs["after"], "R9")
+
+    def test_unreadable_reply_asks_for_message_content_intent(self):
+        caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide(None, unreadable=True)
+        self.assertIn("Message Content Intent", self.replies[-1])
+        self.assertEqual(len(self.cards), 1)
+
+
+class ReadFeedbackTest(unittest.TestCase):
+    def test_only_owner_replies_to_this_card(self):
+        msgs = [
+            {"id": "12", "content": "nền sáng hơn", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}},
+            {"id": "11", "content": "to hơn", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}},
+            {"id": "13", "content": "spam", "author": {"id": "99"}, "message_reference": {"message_id": "IMG"}},
+            {"id": "14", "content": "bot", "author": {"id": "1", "bot": True}, "message_reference": {"message_id": "IMG"}},
+            {"id": "15", "content": "other card", "author": {"id": "42"}, "message_reference": {"message_id": "X"}},
+            {"id": "16", "content": "no reply", "author": {"id": "42"}},
+        ]
+        with mock.patch.object(discord, "_call", return_value=msgs) as call:
+            notes = discord.read_image_feedback("CH", "IMG", ["42"], after="10")
+        self.assertIn("after=10", call.call_args.args[1])
+        self.assertEqual(notes, {"text": "to hơn / nền sáng hơn", "last_id": "12", "unreadable": False})
+
+    def test_empty_content_means_intent_missing(self):
+        msgs = [{"id": "11", "content": "", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}}]
+        with mock.patch.object(discord, "_call", return_value=msgs):
+            notes = discord.read_image_feedback("CH", "IMG", [])
+        self.assertTrue(notes["unreadable"])
 
 
 class ImageDecisionTest(unittest.TestCase):

@@ -62,6 +62,34 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class FeedbackTest(unittest.TestCase):
+    def _body(self, **kw):
+        calls = []
+
+        def post(url, **k):
+            calls.append(k)
+            return _reply_with_image()
+        scene.generate(PNG, PRODUCT, CFG, post=post, api_key="k", **kw)
+        return calls[0]["body"]["messages"][0]["content"]
+
+    def test_edit_sends_previous_scene_then_packshot(self):
+        parts = self._body(feedback="  product   bigger ", previous=b"\x89PNG\r\n\x1a\nprev")
+        self.assertIn('"product bigger"', parts[0]["text"])
+        self.assertIn("SECOND attached image", parts[0]["text"])
+        self.assertEqual([p["type"] for p in parts], ["text", "image_url", "image_url"])
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/png;base64,iVBORw0KGgpwcmV2"))
+
+    def test_feedback_without_previous_extends_the_normal_prompt(self):
+        parts = self._body(feedback="hand on the left")
+        self.assertIn("Mixa", parts[0]["text"])
+        self.assertIn('"hand on the left"', parts[0]["text"])
+        self.assertEqual(len(parts), 2)
+
+    def test_feedback_is_capped(self):
+        parts = self._body(feedback="x" * 2000, previous=PNG)
+        self.assertLess(len(parts[0]["text"]), 1500)
+
+
 class CentredPromptTest(unittest.TestCase):
     def test_prompt_puts_product_in_the_centre_and_keeps_text_bands_calm(self):
         from babebasket import postimage, scene
