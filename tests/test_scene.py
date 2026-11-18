@@ -90,6 +90,36 @@ class FeedbackTest(unittest.TestCase):
         self.assertLess(len(parts[0]["text"]), 1500)
 
 
+class ScaleTest(unittest.TestCase):
+    def test_volume_parsing(self):
+        self.assertEqual(scene._volume_ml("Shampoo, 1.000 ml"), 1000)
+        self.assertEqual(scene._volume_ml("Duschgel, 1 l"), 1000)
+        self.assertEqual(scene._volume_ml("Öl, 2,5 ml"), 2.5)
+        self.assertEqual(scene._volume_ml("Balm, 50 ml"), 50)
+        self.assertIsNone(scene._volume_ml("Geschenkset"))
+
+    def test_one_litre_bottle_is_big_and_heavy(self):
+        hint = scene.size_hint("Shampoo Hydra Hyaluronic, 1.000 ml")
+        self.assertIn("1.000 ml", hint)
+        self.assertIn("heavy", hint)
+        self.assertIn("do not shrink", hint)
+
+    def test_small_jar_keeps_its_unit(self):
+        self.assertIn("25 g, small", scene.size_hint("Tuchmaske, 25 g"))
+
+    def test_prompt_has_asian_hand_and_scale(self):
+        captured = {}
+
+        def post(url, **kw):
+            captured.update(kw)
+            return {}
+        scene.generate(PNG, {"brand": "B", "name": "Shampoo, 1.000 ml"}, CFG, post=post, api_key="k")
+        text = captured["body"]["messages"][0]["content"][0]["text"]
+        self.assertIn("East/Southeast Asian woman", text)
+        self.assertIn("16 cm", text)
+        self.assertIn("1.000 ml", text)
+
+
 class CentredPromptTest(unittest.TestCase):
     def test_prompt_puts_product_in_the_centre_and_keeps_text_bands_calm(self):
         from babebasket import postimage, scene

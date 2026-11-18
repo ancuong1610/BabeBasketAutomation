@@ -10,6 +10,7 @@ plain fallback scene. The model never writes text on the image; postimage.py doe
 from __future__ import annotations
 
 import base64
+import re
 import sys
 from typing import Callable
 
@@ -20,9 +21,11 @@ from babebasket.llm import OPENROUTER_URL
 PROMPT = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
 
 Use the product in the attached image: {product}.
-Scene: a young woman's hand (natural nails, no jewellery) holds this exact product up close, \
+Scene: the hand of a young East/Southeast Asian woman holds this exact product up close, \
 in the aisle of a German drugstore (dm/Rossmann style), shelves with products softly blurred behind, \
 bright natural store light, realistic smartphone photo, shallow depth of field.
+The hand is small and slim, like a petite Vietnamese woman's: about 16 cm from wrist to fingertip, \
+palm about 7 cm wide, natural short nails, no jewellery.{size}
 
 Hard rules:
 - The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
@@ -52,9 +55,49 @@ colours, brand, logo and label text. Do not redesign, translate or invent anythi
 
 PAIR_SCENE_NOTE = (
     "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
-    "Show BOTH together, held side by side, both front labels fully visible and unchanged; "
-    "together they take the central product area described above."
+    "Show BOTH: two hands of the same woman, each holding one bottle side by side, both front labels "
+    "fully visible and unchanged. Keep their true relative sizes (as in the attached image; a 1,000 ml "
+    "bottle is far bigger than a 200 ml one). Together they take the central product area described above."
 )
+
+
+def _volume_ml(name: str) -> float | None:
+    """'…, 1.000 ml' -> 1000; '…, 1 l' -> 1000; '…, 50 g' -> 50 (grams treated like ml)."""
+    m = re.search(r"(\d[\d.,]*)\s*(ml|l|g)\b", name or "", re.I)
+    if not m:
+        return None
+    num = m.group(1)
+    num = num.replace(".", "") if re.fullmatch(r"\d{1,3}(\.\d{3})+", num) else num.replace(",", ".")
+    try:
+        value = float(num)
+    except ValueError:
+        return None
+    return value * 1000 if m.group(2).lower() == "l" else value
+
+
+# How big a product of that amount looks next to a ~16 cm hand. Heights only for bottles:
+# jars and tubes keep the shape of the packshot.
+SIZE_GUIDE = [
+    (60, "small: it fits inside the hand"),
+    (160, "about hand-sized"),
+    (320, "medium: a bottle of this size is a bit taller than the hand (about 17-20 cm)"),
+    (600, "large: a bottle of this size is clearly taller than the hand (about 21-24 cm); "
+          "a jar of this size is wider than the small palm"),
+    (10**9, "very big and heavy, around 1 kg: a bottle of this size is about 26-29 cm tall, much taller "
+            "than the small hand, held from the side or supported from below, and it looks heavy"),
+]
+
+
+def size_hint(name: str) -> str:
+    ml = _volume_ml(name)
+    if not ml:
+        return ""
+    amount = re.search(r"\d[\d.,]*\s*(ml|l|g)\b", name, re.I).group(0)
+    desc = next(text for limit, text in SIZE_GUIDE if ml <= limit)
+    return (f"\nTrue scale matters: the product holds {amount}, {desc}. "
+            "Show it at its real size relative to the small hand; do not shrink it to fit the hand.")
+
+
 FEEDBACK_NOTE = "\n\nThe shop owner also asks (the hard rules above still win): \"{feedback}\""
 MAX_FEEDBACK_CHARS = 500
 
@@ -104,7 +147,8 @@ def generate(
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
     else:
-        text = PROMPT.format(product=product_name) + (PAIR_SCENE_NOTE if pair else "") \
+        size = "" if pair else size_hint(product.get("name", ""))
+        text = PROMPT.format(product=product_name, size=size) + (PAIR_SCENE_NOTE if pair else "") \
             + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
         content = [
             {"type": "text", "text": text},
