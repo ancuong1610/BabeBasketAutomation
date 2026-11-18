@@ -1,7 +1,9 @@
 """Discord approval cards over the REST API (no always-on bot process needed).
 
-A card is one message with an embed. The bot adds reactions 1️⃣–4️⃣, ✅ and ❌.
-The owner taps a number to pick a caption and ✅ to approve (or ❌ to reject).
+Two steps per post:
+1. Caption card (store packshot, captions): tap 1️⃣–4️⃣ for the caption, ✅ to approve, ❌ to reject.
+2. Image card (the AI post image, made only after step 1): ✅ use it, 🔄 make a new one,
+   ⬜ use the plain background instead, ❌ drop the post.
 `check` reads the reactions back.
 """
 
@@ -20,6 +22,7 @@ from babebasket.llm import image_labels
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
+RETRY, PLAIN = "🔄", "⬜"
 # Owner-only marker: which store the product comes from (never part of the post itself)
 STORE_BADGES = {"dm": "🟦 DM", "rossmann": "🟥 ROSSMANN"}
 STORE_COLORS = {"dm": 0x1F5FAD, "rossmann": 0xC8102E}
@@ -88,20 +91,58 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     return card
 
 
-def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | None = None) -> str:
+def _send(channel_id: str, card: dict, image_path: str | None = None) -> dict:
     if image_path:
-        message = request_multipart(
+        return request_multipart(
             f"{API}/channels/{channel_id}/messages",
             fields={"payload_json": json.dumps(card, ensure_ascii=False)},
             files=[("files[0]", "post.jpg", Path(image_path).read_bytes(), "image/jpeg")],
             headers={"Authorization": f"Bot {secret('DISCORD_BOT_TOKEN')}", "User-Agent": BOT_UA},
             timeout=120,
         )
-    else:
-        message = _call("POST", f"/channels/{channel_id}/messages", card)
-    for e in NUMBERS[:n_captions] + [APPROVE, REJECT]:
-        _call("PUT", f"/channels/{channel_id}/messages/{message['id']}/reactions/{_emoji(e)}/@me")
+    return _call("POST", f"/channels/{channel_id}/messages", card)
+
+
+def _react(channel_id: str, message_id: str, emojis: list[str]) -> None:
+    for e in emojis:
+        _call("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{_emoji(e)}/@me")
         time.sleep(0.4)  # stay well inside Discord's reaction rate limit
+
+
+def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | None = None) -> str:
+    message = _send(channel_id, card, image_path)
+    _react(channel_id, message["id"], NUMBERS[:n_captions] + [APPROVE, REJECT])
+    return message["id"]
+
+
+def build_image_card(draft_id: int, product: dict, source: str, ai_tries_left: int, note: str = "",
+                     reply_to: str | None = None) -> dict:
+    kind = "AI scene" if source == "gemini" else "plain background"
+    actions = "✅ use this image · " + (f"🔄 new AI image ({ai_tries_left} left) · " if ai_tries_left > 0 else "") \
+        + ("⬜ plain background · " if source == "gemini" else "") + "❌ drop the post"
+    content = f"🖼️ **Draft #{draft_id}** post image ({kind}): {actions}"
+    if note:
+        content += f"\n{note}"
+    card = {
+        "content": content[:2000],
+        "embeds": [{
+            "title": f"{product.get('brand', '')} · {product.get('name', '')}"[:256],
+            "image": {"url": "attachment://post.jpg"},
+            "footer": {"text": f"draft {draft_id} · image"},
+            "color": STORE_COLORS.get(product.get("store"), 0xF6E7A1),
+        }],
+        "attachments": [{"id": 0, "filename": "post.jpg"}],
+        "allowed_mentions": {"parse": []},
+    }
+    if reply_to:
+        card["message_reference"] = {"message_id": reply_to, "fail_if_not_exists": False}
+    return card
+
+
+def post_image_card(channel_id: str, card: dict, image_path: str, ai_tries_left: int, source: str) -> str:
+    message = _send(channel_id, card, image_path)
+    emojis = [APPROVE] + ([RETRY] if ai_tries_left > 0 else []) + ([PLAIN] if source == "gemini" else []) + [REJECT]
+    _react(channel_id, message["id"], emojis)
     return message["id"]
 
 
@@ -109,8 +150,8 @@ def reactors(channel_id: str, message_id: str, emoji: str) -> list[dict]:
     return _call("GET", f"/channels/{channel_id}/messages/{message_id}/reactions/{_emoji(emoji)}?limit=100") or []
 
 
-def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
-    """None while undecided; otherwise {'status': 'approved'|'rejected', 'caption': int|None}.
+def owner_taps(channel_id: str, message_id: str, emojis: list[str], owners: list[str]) -> set[str]:
+    """Which of `emojis` the owner (or any non-bot user if no owners are set) has tapped.
 
     One call reads the reaction counts; user lists are only fetched for emojis that
     someone besides the bot has tapped (count > 1), which keeps us clear of rate limits.
@@ -118,23 +159,35 @@ def read_decision(channel_id: str, message_id: str, n_captions: int, owners: lis
     message = _call("GET", f"/channels/{channel_id}/messages/{message_id}")
     tapped = {r["emoji"]["name"] for r in message.get("reactions", []) if r.get("count", 0) > 1}
     owner_set = {str(o) for o in owners}
-
-    def by_owner(emoji: str) -> bool:
+    found = set()
+    for emoji in emojis:
         if emoji not in tapped:
-            return False
+            continue
         for user in reactors(channel_id, message_id, emoji):
-            if user.get("bot"):
-                continue
-            if not owner_set or str(user["id"]) in owner_set:
-                return True
-        return False
+            if not user.get("bot") and (not owner_set or str(user["id"]) in owner_set):
+                found.add(emoji)
+                break
+    return found
 
-    if by_owner(REJECT):
+
+def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
+    """Caption card. None while undecided; otherwise {'status': 'approved'|'rejected', 'caption': int|None}."""
+    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT], owners)
+    if REJECT in taps:
         return {"status": "rejected", "caption": None}
-    if not by_owner(APPROVE):
+    if APPROVE not in taps:
         return None
-    picked = [i + 1 for i, e in enumerate(NUMBERS[:n_captions]) if by_owner(e)]
+    picked = [i + 1 for i, e in enumerate(NUMBERS[:n_captions]) if e in taps]
     return {"status": "approved", "caption": picked[0] if picked else 1, "multiple": len(picked) > 1}
+
+
+def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> str | None:
+    """Image card. None while undecided; else 'reject', 'retry', 'plain' or 'accept' (in that priority)."""
+    taps = owner_taps(channel_id, message_id, [APPROVE, RETRY, PLAIN, REJECT], owners)
+    for emoji, decision in ((REJECT, "reject"), (RETRY, "retry"), (PLAIN, "plain"), (APPROVE, "accept")):
+        if emoji in taps:
+            return decision
+    return None
 
 
 def reply(channel_id: str, message_id: str, text: str) -> None:

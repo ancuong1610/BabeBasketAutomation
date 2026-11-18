@@ -57,3 +57,6 @@ enabled = true
 # Switch to "google/gemini-3-pro-image" for higher quality (costs more). enabled = false -> plain background.
 model = "google/gemini-3.1-flash-image"
 enabled = true
+# AI images are made only after the caption is approved (about $0.08 each).
+max_per_day = 4          # paid image requests per day; after that the plain background is used
+max_per_post = 2         # first try + one 🔄 retry

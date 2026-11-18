@@ -74,7 +74,7 @@ def approved_draft(conn, caption_text="Caption hai 99🐠", chosen=2):
     payload = {"product": {"brand": "B", "name": "N"}, "quote": {}, "warnings": [],
                "draft": {"captions": [{"style": "a", "text": "Caption một"}, {"style": "b", "text": caption_text}]}}
     draft_id = db.add_draft(conn, "dm", "1", payload)
-    db.set_status(conn, draft_id, "approved", discord_message_id="MSG", chosen_caption=chosen)
+    db.set_status(conn, draft_id, "ready", discord_message_id="MSG", chosen_caption=chosen)
     return draft_id
 
 
@@ -105,7 +105,7 @@ class CmdPublishTest(unittest.TestCase):
         with mock.patch.object(threads, "publish") as pub:
             cli.cmd_publish({"threads": {"enabled": False}, "discord": {"channel_id": "CH"}}, self.conn)
         pub.assert_not_called()
-        self.assertEqual(self.row(draft_id)[0], "approved")
+        self.assertEqual(self.row(draft_id)[0], "ready")
 
     def test_success_marks_published_and_replies_with_link(self):
         draft_id = approved_draft(self.conn)
@@ -117,12 +117,12 @@ class CmdPublishTest(unittest.TestCase):
         self.assertEqual(payload["threads"]["permalink"], "https://t/p")
         self.assertIn("https://t/p", self.replies[0])
 
-    def test_failure_counts_attempt_and_stays_approved(self):
+    def test_failure_counts_attempt_and_stays_ready(self):
         draft_id = approved_draft(self.conn)
         with mock.patch.object(threads, "publish", side_effect=RuntimeError("HTTP 500")):
             cli.cmd_publish(CFG, self.conn)
         status, payload = self.row(draft_id)
-        self.assertEqual(status, "approved")
+        self.assertEqual(status, "ready")
         self.assertEqual(payload["publish_attempts"], 1)
         self.assertIn("HTTP 500", self.replies[0])
 

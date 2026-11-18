@@ -13,7 +13,7 @@ python3 -m babebasket scrape            # dm (+ Rossmann once configured) -> dat
 python3 -m babebasket shortlist         # show today's picks with prices
 python3 -m babebasket draft             # product details + reviews + LLM drafts for the shortlist
 python3 -m babebasket post              # send the drafts to Discord as approval cards
-python3 -m babebasket check             # read your reactions: approve / reject / caption choice
+python3 -m babebasket check             # read caption + image approvals, make images, publish ready posts
 python3 -m babebasket daily             # scrape + draft + post
 python3 -m babebasket try dm 3050111    # one product end to end, printed; no Discord, no DB
 python3 -m unittest                     # tests, no network
@@ -21,14 +21,21 @@ python3 -m unittest                     # tests, no network
 
 ## Approving in Discord
 
-Each card shows the photo, shelf price → cost → sale price, rating, the review summary,
-the image label texts and 4 caption options. React:
+Two steps per post, so no paid AI image is made for a post you reject.
+
+**1. Caption card** (the store's packshot, prices, rating, review summary, label texts, 4 captions):
 
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
 - ✅ to approve, ❌ to reject
 
-`check` picks up the decision and replies under the card. Approved drafts stay in the
-database with status `approved`, ready for the publishing step.
+**2. Image card**, sent as a reply under the caption card on the next `check` (≤10 min):
+
+- ✅ use this image → queued for posting
+- 🔄 make a new AI image (shown only while tries are left)
+- ⬜ use the plain background instead (free)
+- ❌ drop the post
+
+Status in the database: `pending` → `approved` (caption) → `image_pending` → `ready` (image) → `published`.
 
 ## Setup on the Mac mini
 
@@ -64,7 +71,7 @@ One-time setup (already done on the Mac mini):
 
 ## Post image
 
-Every draft gets one finished image (1080×1350) that the Discord card shows:
+Made only after the caption is approved (step 2 above), as one finished image (1080×1350):
 
 1. `scene.py` sends the dm/Rossmann packshot to a Gemini image model on OpenRouter
    (`[image] model` in `config.toml`), which returns a photo of a hand holding the product
@@ -72,7 +79,12 @@ Every draft gets one finished image (1080×1350) that the Discord card shows:
 2. `postimage.py` draws the text the LLM wrote in `labels` (title, hero, who_for, 2–3 points;
    `mode` = `usage` for hair/styling, `benefits` otherwise) as red boxes in Be Vietnam Pro,
    plus the logo from `assets/logo.jpg` (replace it with a larger file when available).
-3. Saved as `data/images/draft-<id>.jpg`; `post` uploads it with the card.
+3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
+
+Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
+(default 2: first try + one 🔄) and `max_per_day` (default 4) cap the paid requests; past a cap
+the plain background is used and the card says so. Every paid request is logged in the
+`image_calls` table. `enabled = false` turns AI images off entirely.
 
 Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
 Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.

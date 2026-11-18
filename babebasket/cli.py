@@ -4,7 +4,7 @@
     python3 -m babebasket shortlist         # show today's picks
     python3 -m babebasket draft             # details + reviews + LLM drafts for the shortlist
     python3 -m babebasket post              # send drafted cards to Discord
-    python3 -m babebasket check             # read approvals from Discord, then publish approved drafts
+    python3 -m babebasket check             # read caption + image approvals, make images, publish ready posts
     python3 -m babebasket publish           # publish approved drafts to Threads ([threads].enabled)
     python3 -m babebasket daily             # scrape + draft + post
     python3 -m babebasket try dm 3050111    # one product end to end, printed (no Discord)
@@ -89,11 +89,12 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
-def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None) -> str | None:
+def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None, ai: bool = True) -> str | None:
     """Render the post image for a draft payload. Returns the file path, or None if there is no packshot.
 
-    Gemini scene first; if it fails or returns something that is not an image, the plain
-    fallback background is used. Sets payload["image_path"] and payload["image_source"].
+    With ai=True: Gemini scene first; if it fails or returns something that is not an image,
+    the plain fallback background is used. With ai=False: plain background only (free).
+    Sets payload["image_path"] and payload["image_source"].
     """
     import io
 
@@ -112,7 +113,7 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         return None
     labels = llm.image_labels(payload["draft"])
     source, base = "fallback", None
-    generated = gen(packshot, product, cfg)
+    generated = gen(packshot, product, cfg) if ai else None
     if generated:
         try:
             base = Image.open(io.BytesIO(generated))
@@ -135,12 +136,8 @@ def cmd_draft(cfg: dict, conn, limit: int | None) -> None:
         except Exception as err:
             print(f"! {product['brand']} {product['name'][:40]}: {err}", file=sys.stderr)
             continue
+        # No image yet: the post image is made only after the caption is approved (see cmd_images).
         draft_id = db.add_draft(conn, product["store"], product["product_id"], payload)
-        try:
-            if build_image(payload, DATA / "images" / f"draft-{draft_id}.jpg", cfg):
-                db.set_payload(conn, draft_id, payload)
-        except Exception as err:  # never lose a draft over its image
-            print(f"! image for draft #{draft_id}: {err}", file=sys.stderr)
         usage = payload["draft"].get("_usage", {})
         print(f"draft #{draft_id}: {product['brand']} · {product['name'][:50]}  "
               f"({usage.get('total_tokens', '?')} tokens)")
@@ -193,23 +190,113 @@ def cmd_check(cfg: dict, conn) -> None:
         if decision["status"] == "approved":
             note = " (several numbers tapped, used the first)" if decision.get("multiple") else ""
             discord.reply(channel, row["discord_message_id"],
-                          f"✅ Draft #{row['id']} approved with caption {decision['caption']}{note}. Queued for posting.")
+                          f"✅ Draft #{row['id']} approved with caption {decision['caption']}{note}. Making the post image…")
         else:
             discord.reply(channel, row["discord_message_id"], f"❌ Draft #{row['id']} rejected.")
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
+
+
+def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
+    """Paid AI image requests still allowed for this draft, within the daily cap."""
+    ic = cfg.get("image", {})
+    if not ic.get("enabled", True):
+        return 0
+    per_post = ic.get("max_per_post", 2) - db.image_calls_for(conn, draft_id)
+    per_day = ic.get("max_per_day", 4) - db.image_calls_today(conn)
+    return max(0, min(per_post, per_day))
+
+
+def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "") -> None:
+    """Make the post image (AI if allowed, else plain) and send it to Discord for approval."""
+    from babebasket import discord
+
+    draft_id = row["id"]
+    notes = [note] if note else []
+    use_ai = ai and ai_tries_left(cfg, conn, draft_id) > 0
+    if ai and not use_ai:
+        notes.append("AI image limit reached (see [image] in config.toml), so this is the plain background.")
+    channel = cfg["discord"]["channel_id"]
+    if not payload["product"].get("image_url"):  # no product photo at all: text-only post
+        db.set_status(conn, draft_id, "ready")
+        discord.reply(channel, row["discord_message_id"],
+                      f"ℹ️ Draft #{draft_id} has no product photo, so it will be posted as text only.")
+        return
+    version = payload.get("image_versions", 0) + 1
+    old_ai_image = payload.get("image_path") if payload.get("image_source") == "gemini" else None
+    if ai and version == 1 and old_ai_image and Path(old_ai_image).exists():
+        # Drafted under the old flow, which already paid for an AI image: show that one first.
+        payload["image_versions"] = version
+        use_ai, path = False, old_ai_image
+    else:
+        path = build_image(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg", cfg, ai=use_ai)
+    if path is None:  # photo download failed: nothing was paid for; stay put and retry on the next check
+        raise RuntimeError("product photo download failed; will retry")
+    payload["image_versions"] = version
+    if use_ai:
+        ok = payload.get("image_source") == "gemini"
+        db.log_image_call(conn, draft_id, ok)
+        if not ok:
+            notes.append("The AI image failed, so this is the plain background.")
+    tries = ai_tries_left(cfg, conn, draft_id)
+    source = payload["image_source"]
+    card = discord.build_image_card(draft_id, payload["product"], source, tries, "\n".join(notes),
+                                    reply_to=row["discord_message_id"])
+    payload["image_message_id"] = discord.post_image_card(channel, card, path, tries, source)
+    db.set_payload(conn, draft_id, payload)
+    db.set_status(conn, draft_id, "image_pending")
+    print(f"draft #{draft_id}: image card v{version} ({source})")
+
+
+def cmd_images(cfg: dict, conn) -> None:
+    """Caption-approved drafts get their post image now."""
+    for row in db.drafts(conn, "approved"):
+        try:
+            send_image_card(cfg, conn, row, json.loads(row["payload"]), ai=True)
+        except Exception as err:  # one bad image must not block the others; retried on the next check
+            print(f"! image for draft #{row['id']}: {err}", file=sys.stderr)
+
+
+def cmd_check_images(cfg: dict, conn) -> None:
+    from babebasket import discord
+
+    channel = cfg["discord"]["channel_id"]
+    owners = cfg["discord"].get("owner_user_ids", [])
+    for row in db.drafts(conn, "image_pending"):
+        payload = json.loads(row["payload"])
+        message_id = payload.get("image_message_id")
+        if not message_id:
+            continue
+        decision = discord.read_image_decision(channel, message_id, owners)
+        if decision is None:
+            continue
+        try:
+            if decision == "accept":
+                db.set_status(conn, row["id"], "ready", decided_at=db.now())
+                discord.reply(channel, message_id, f"✅ Image for draft #{row['id']} approved. Queued for posting.")
+            elif decision == "reject":
+                db.set_status(conn, row["id"], "rejected", decided_at=db.now())
+                discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+            elif decision == "retry":
+                send_image_card(cfg, conn, row, payload, ai=True)
+            else:  # plain
+                send_image_card(cfg, conn, row, payload, ai=False)
+        except Exception as err:
+            print(f"! image decision for draft #{row['id']}: {err}", file=sys.stderr)
+            continue
+        print(f"draft #{row['id']}: image {decision}")
 
 
 MAX_PUBLISH_ATTEMPTS = 3
 
 
 def cmd_publish(cfg: dict, conn) -> None:
-    """Post approved drafts to Threads. Each draft is isolated: one failure never blocks the others."""
+    """Post drafts whose caption and image were both approved ('ready'). One failure never blocks the others."""
     from babebasket import discord, threads
 
     if not cfg.get("threads", {}).get("enabled"):
         return
     channel = cfg["discord"]["channel_id"]
-    rows = db.drafts(conn, "approved")
+    rows = db.drafts(conn, "ready")
     try:
         if threads.maybe_refresh():
             print("threads token refreshed")
@@ -227,7 +314,7 @@ def cmd_publish(cfg: dict, conn) -> None:
             print(f"! draft #{row['id']}: {reason}", file=sys.stderr)
             continue
         try:
-            image_url = discord.card_image_url(channel, row["discord_message_id"])
+            image_url = discord.card_image_url(channel, payload.get("image_message_id") or row["discord_message_id"])
             post = threads.publish(text, image_url)
         except Exception as err:
             attempts = payload.get("publish_attempts", 0) + 1
@@ -342,7 +429,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "post":
         cmd_post(cfg, conn)
     elif args.cmd == "check":
-        cmd_check(cfg, conn)
+        cmd_check(cfg, conn)          # caption cards
+        cmd_check_images(cfg, conn)   # image cards
+        cmd_images(cfg, conn)         # make images for newly approved captions
         cmd_publish(cfg, conn)
     elif args.cmd == "publish":
         cmd_publish(cfg, conn)

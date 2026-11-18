@@ -26,11 +26,17 @@ CREATE TABLE IF NOT EXISTS drafts (
     product_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     payload TEXT NOT NULL,
-    -- drafted -> pending (card sent) -> approved | rejected -> published
+    -- drafted -> pending (caption card sent) -> approved (caption ok) | rejected
+    --   -> image_pending (image card sent) -> ready (image ok) | rejected -> published
     status TEXT NOT NULL DEFAULT 'drafted',
     discord_message_id TEXT,
     chosen_caption INTEGER,
     decided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS image_calls (
+    at TEXT NOT NULL,
+    draft_id INTEGER,
+    ok INTEGER NOT NULL
 );
 """
 
@@ -94,3 +100,18 @@ def recently_drafted(conn: sqlite3.Connection, days: int) -> set[tuple[str, str]
 def set_payload(conn: sqlite3.Connection, draft_id: int, payload: dict) -> None:
     conn.execute("UPDATE drafts SET payload = ? WHERE id = ?", (json.dumps(payload, ensure_ascii=False), draft_id))
     conn.commit()
+
+
+def log_image_call(conn: sqlite3.Connection, draft_id: int | None, ok: bool) -> None:
+    """One paid AI image request (successful or not)."""
+    conn.execute("INSERT INTO image_calls (at, draft_id, ok) VALUES (?, ?, ?)", (now(), draft_id, int(ok)))
+    conn.commit()
+
+
+def image_calls_today(conn: sqlite3.Connection) -> int:
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    return conn.execute("SELECT COUNT(*) FROM image_calls WHERE at >= ?", (today,)).fetchone()[0]
+
+
+def image_calls_for(conn: sqlite3.Connection, draft_id: int) -> int:
+    return conn.execute("SELECT COUNT(*) FROM image_calls WHERE draft_id = ?", (draft_id,)).fetchone()[0]
