@@ -42,10 +42,9 @@ def _emoji(e: str) -> str:
 def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str],
                has_image: bool = False) -> dict:
     labels = image_labels(draft)
-    head = " · ".join(x for x in (labels["title"], labels["hero"]) if x)
-    label_text = (f"**{head}**\n" if head else "") + "\n".join(f"▫️ {b}" for b in labels["points"])
-    if labels["who_for"]:
-        label_text += f"\n👤 {labels['who_for']}"
+    label_text = (f"**{labels['title']}**\n" if labels["title"] else "") + "\n".join(f"▫️ {b}" for b in labels["points"])
+    if labels["subtitle"]:
+        label_text += f"\n👤 {labels['subtitle']}"
 
     captions = draft.get("captions", [])
     caption_text = "\n\n".join(

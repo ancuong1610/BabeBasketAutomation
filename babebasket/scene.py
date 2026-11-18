@@ -25,9 +25,10 @@ Hard rules:
 - The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
 Do not redesign, translate or invent anything on the packaging.
 - Product sharp, front label facing the camera, fully visible, not cropped.
-- Place the product slightly left of centre, from about 15% to 75% of the image height.
-- Keep the top 15%, the right 40% and the bottom 20% of the image calm (blurred shelf), \
-because text boxes will be added there later.
+- Put the product in the CENTRE of the image horizontally. It fills about 45-55% of the image width \
+and sits between about 22% and 74% of the image height.
+- Keep the top 20% and the bottom 24% of the image calm (soft blurred shelf, no busy details), \
+because text will be added there later.
 - Do not add any text, captions, stickers, logos, watermarks or price tags."""
 
 

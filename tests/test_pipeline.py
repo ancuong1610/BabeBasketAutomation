@@ -63,8 +63,8 @@ GOOD_DRAFT = {
     "review_summary": "Review khen thơm.",
     "fit_for_vietnam": "Hợp tóc khô.",
     "labels": {
-        "title": "Balea Haarkur Glow", "hero": "Keratin", "who_for": "Dành cho tóc khô",
-        "mode": "usage", "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"],
+        "title": "Kem ủ tóc Balea Glow", "subtitle": "Dành cho tóc khô",
+        "kind": "hair", "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"],
     },
     "captions": [
         {"style": "everyday story", "text": "Các babe ơi {PRICE}/tuýp 200ml nha 🥰"},
@@ -78,18 +78,20 @@ GOOD_DRAFT = {
 class ImageLabelsTest(unittest.TestCase):
     def test_image_labels_new_shape(self):
         out = llm.image_labels(GOOD_DRAFT)
-        self.assertEqual(out, {"title": "Balea Haarkur Glow", "hero": "Keratin", "who_for": "Dành cho tóc khô",
-                               "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"], "mode": "usage"})
+        self.assertEqual(out, {"title": "Kem ủ tóc Balea Glow", "subtitle": "Dành cho tóc khô",
+                               "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"], "kind": "hair"})
 
-    def test_image_labels_old_shape(self):
-        out = llm.image_labels({"labels": {"benefits": ["a", "b"], "who_for": "Dành cho x"}})
-        self.assertEqual(out, {"title": "", "hero": "", "who_for": "Dành cho x", "points": ["a", "b"], "mode": "benefits"})
+    def test_image_labels_old_shape_maps_who_for_to_subtitle(self):
+        out = llm.image_labels({"labels": {"title": "T", "hero": "Keratin", "who_for": "Dành cho x",
+                                           "mode": "usage", "points": ["a", "b"]}})
+        self.assertEqual(out, {"title": "T", "subtitle": "Dành cho x", "points": ["a", "b"], "kind": "other"})
+        self.assertEqual(llm.image_labels({"labels": {"hero": "Keratin", "benefits": ["a"]}})["subtitle"], "Keratin")
 
-    def test_bad_mode_is_a_warning_not_a_lost_draft(self):
-        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "mode": "other"}}
+    def test_bad_kind_is_a_warning_not_a_lost_draft(self):
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "kind": "weird"}}
         self.assertEqual(llm.validate(draft), [])
-        self.assertIn("labels.mode must be benefits or usage", llm.warnings(draft))
-        self.assertEqual(llm.image_labels(draft)["mode"], "benefits")
+        self.assertTrue(any(w.startswith("labels.kind must be") for w in llm.warnings(draft)))
+        self.assertEqual(llm.image_labels(draft)["kind"], "other")
 
     def test_point_count_is_a_warning_and_clamped(self):
         draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "points": ["a", "b", "c", "d"]}}
@@ -98,22 +100,29 @@ class ImageLabelsTest(unittest.TestCase):
         self.assertEqual(llm.image_labels(draft)["points"], ["a", "b", "c"])
 
     def test_null_fields_do_not_crash(self):
-        draft = {**GOOD_DRAFT, "labels": {"title": None, "hero": None, "who_for": None, "mode": None, "points": None}}
+        draft = {**GOOD_DRAFT, "labels": {"title": None, "subtitle": None, "kind": None, "points": None}}
         labels = llm.image_labels(draft)
-        self.assertEqual((labels["title"], labels["hero"], labels["who_for"], labels["points"]), ("", "", "", []))
+        self.assertEqual((labels["title"], labels["subtitle"], labels["points"]), ("", "", []))
         self.assertIsInstance(llm.warnings(draft), list)
         self.assertEqual(llm.validate(draft), [])
 
     def test_warnings_title_too_long(self):
-        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "title": "x" * 33}}
+        draft = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "title": "x" * 39}}
         self.assertTrue(any(w.startswith("label too long for the image") for w in llm.warnings(draft)))
+        ok = {**GOOD_DRAFT, "labels": {**GOOD_DRAFT["labels"], "title": "x" * 38}}
+        self.assertFalse(any(w.startswith("label too long") for w in llm.warnings(ok)))
+
+    def test_prompt_picks_points_by_product_kind(self):
+        for needle in ('"kind"', '"subtitle"', "hương đầu", "loại sản phẩm + hãng"):
+            self.assertIn(needle, llm.USER_TEMPLATE)
 
     def test_card_shows_new_labels(self):
         card = discord.build_card(1, {"brand": "Balea", "name": "Kur", "rating": 4.1, "review_count": 9, "store": "dm"},
                                   {"shelf_eur": 2.75, "coupon_pct": 0, "cost_eur": 2.75, "sale_k": 115, "margin_k": 33},
                                   GOOD_DRAFT, [])
         desc = card["embeds"][0]["description"]
-        self.assertIn("Balea Haarkur Glow", desc)
+        self.assertIn("Kem ủ tóc Balea Glow", desc)
+        self.assertIn("Dành cho tóc khô", desc)
         self.assertIn("▫️ Ủ 5 phút sau khi gội", desc)
 
 

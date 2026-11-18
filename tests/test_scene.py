@@ -60,3 +60,12 @@ class SceneTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CentredPromptTest(unittest.TestCase):
+    def test_prompt_puts_product_in_the_centre_and_keeps_text_bands_calm(self):
+        from babebasket import postimage, scene
+        self.assertIn("CENTRE of the image horizontally", scene.PROMPT)
+        self.assertNotIn("left of centre", scene.PROMPT)
+        top, bottom = postimage.PRODUCT_ZONE
+        self.assertIn(f"{round(top / postimage.H * 100)}% and {round(bottom / postimage.H * 100)}%", scene.PROMPT)

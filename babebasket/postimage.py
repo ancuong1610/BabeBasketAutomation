@@ -1,8 +1,9 @@
-"""The post image: a scene (Gemini photo or plain fallback) + red text boxes + logo.
+"""The post image: a scene (Gemini photo or plain fallback) + outlined text + logo.
 
-One template, modelled on the shop's Mixa post: title box centred on top, key
-ingredient and "Dành cho …" on the right, 2–3 points stacked bottom-left, logo
-sticker bottom-right. All Vietnamese text is drawn here, never by the image model.
+Product in the centre. Title (Vietnamese name + brand) and one subtitle line centred on
+top, 2–3 points bottom-left, logo bottom-right. Text is white with a thin dark outline
+and a soft shadow, no boxes, so it reads on any photo without a loud colour.
+All Vietnamese text is drawn here, never by the image model.
 """
 
 from __future__ import annotations
@@ -16,23 +17,25 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 from babebasket.config import ROOT
 
 W, H = 1080, 1350
-RED = (224, 38, 43)
 WHITE = (255, 255, 255)
-RADIUS = 18
-PAD_X, PAD_Y = 18, 12
-MAX_TEXT_W = 390        # right-column boxes: stay right of PRODUCT_BOX
-TITLE_MAX_W = 900
-POINTS_MAX_W = 700
+OUTLINE = (20, 20, 20)
 MARGIN = 48
-GAP = 18
-LOGO_SIZE = 180
-TITLE_SIZE, TEXT_SIZE = 48, 34
+TOP = 56
+TITLE_SIZE, SUBTITLE_SIZE, TEXT_SIZE = 54, 32, 33
+TITLE_STROKE, TEXT_STROKE = 3, 2
+TITLE_MAX_W = 960
+SUBTITLE_MAX_W = 900
+POINTS_MAX_W = 720
+LINE_GAP = 6
+POINT_GAP = 6
+LOGO_SIZE = 150
 FONT_BOLD = ROOT / "assets" / "fonts" / "BeVietnamPro-Bold.ttf"
 FONT_TITLE = ROOT / "assets" / "fonts" / "BeVietnamPro-ExtraBold.ttf"
 LOGO = ROOT / "assets" / "logo.jpg"
-# Where the product sits: centre x, top, max width, max height. Left of centre so the
-# right column and the bottom row stay free for text (same brief as the Gemini prompt).
-PRODUCT_BOX = (380, 220, 440, 860)
+# Vertical band the product occupies (same brief as the Gemini prompt: 22%–74% of the height).
+PRODUCT_ZONE = (int(H * 0.22), int(H * 0.74))
+# Fallback scene: product centre x, top, max width, max height inside PRODUCT_ZONE.
+PRODUCT_BOX = (W // 2, PRODUCT_ZONE[0], 560, PRODUCT_ZONE[1] - PRODUCT_ZONE[0])
 
 
 @lru_cache(maxsize=None)
@@ -54,27 +57,42 @@ def _wrap(text: str, f: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     return lines
 
 
-def _box_size(text: str, f: ImageFont.FreeTypeFont, max_w: int = MAX_TEXT_W) -> tuple[list[str], int, int, int]:
-    lines = _wrap(text, f, max_w)
+def wrap_balanced(text: str, f: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+    """Same number of lines as a greedy wrap, but with the widest line as narrow as possible
+    (no lonely last word under a long first line)."""
+    greedy = _wrap(text, f, max_w)
+    if len(greedy) < 2:
+        return greedy
+    lo, hi = int(max(f.getlength(w) for w in text.split())), max_w
+    best = greedy
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        trial = _wrap(text, f, mid)
+        if len(trial) <= len(greedy):
+            best, hi = trial, mid - 1
+        else:
+            lo = mid + 1
+    return best
+
+
+def _text(img: Image.Image, lines: list[str], f: ImageFont.FreeTypeFont, y: int, stroke: int,
+          x: int | None = None) -> tuple[int, int, int, int]:
+    """White outlined lines, centred when x is None. Returns the bounding box."""
     ascent, descent = f.getmetrics()
-    line_h = ascent + descent
-    w = int(max(f.getlength(l) for l in lines)) + 2 * PAD_X
-    h = line_h * len(lines) + 2 * PAD_Y
-    return lines, w, h, line_h
-
-
-def _draw_box(img: Image.Image, x: int, y: int, lines: list[str], w: int, h: int, line_h: int,
-              f: ImageFont.FreeTypeFont) -> tuple[int, int, int, int]:
-    # soft shadow so the box lifts off busy backgrounds
+    line_h = ascent + descent + LINE_GAP
+    widths = [f.getlength(l) for l in lines]
+    xs = [int((W - w) / 2) if x is None else x for w in widths]
     shadow = Image.new("L", img.size, 0)
-    ImageDraw.Draw(shadow).rounded_rectangle((x + 3, y + 6, x + w + 3, y + h + 6), RADIUS, fill=90)
-    shadow = shadow.filter(ImageFilter.GaussianBlur(8))
-    img.paste((0, 0, 0), (0, 0), shadow)
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle((x, y, x + w, y + h), RADIUS, fill=RED)
+    sd = ImageDraw.Draw(shadow)
     for i, line in enumerate(lines):
-        d.text((x + PAD_X, y + PAD_Y + i * line_h), line, font=f, fill=WHITE)
-    return (x, y, x + w, y + h)
+        sd.text((xs[i] + 2, y + i * line_h + 3), line, font=f, fill=150, stroke_width=stroke + 1, stroke_fill=150)
+    img.paste((0, 0, 0), (0, 0), shadow.filter(ImageFilter.GaussianBlur(3)))
+    d = ImageDraw.Draw(img)
+    for i, line in enumerate(lines):
+        d.text((xs[i], y + i * line_h), line, font=f, fill=WHITE, stroke_width=stroke, stroke_fill=OUTLINE)
+    x0 = min(xs) - stroke
+    x1 = int(max(xx + w for xx, w in zip(xs, widths))) + stroke
+    return (x0, y - stroke, x1, y + line_h * len(lines) - LINE_GAP + stroke)
 
 
 def _logo() -> Image.Image:
@@ -89,25 +107,26 @@ def render(scene: Image.Image, labels: dict) -> Image.Image:
     img = ImageOps.fit(scene.convert("RGB"), (W, H), Image.LANCZOS)
     layout: dict = {}
 
+    y = TOP
     if labels.get("title"):
         f = font(TITLE_SIZE, title=True)
-        lines, w, h, lh = _box_size(labels["title"], f, TITLE_MAX_W)
-        layout["title"] = _draw_box(img, (W - w) // 2, 64, lines, w, h, lh, f)
+        layout["title"] = _text(img, wrap_balanced(labels["title"], f, TITLE_MAX_W), f, y, TITLE_STROKE)
+        y = layout["title"][3] + 12
+    if labels.get("subtitle"):
+        f = font(SUBTITLE_SIZE)
+        layout["subtitle"] = _text(img, wrap_balanced(labels["subtitle"], f, SUBTITLE_MAX_W), f, y, TEXT_STROKE)
 
     f = font(TEXT_SIZE)
-    y = (layout["title"][3] if "title" in layout else MARGIN) + 2 * GAP + 40
-    for key in ("hero", "who_for"):
-        if labels.get(key):
-            lines, w, h, lh = _box_size(labels[key], f)
-            layout[key] = _draw_box(img, W - MARGIN - w, y, lines, w, h, lh, f)
-            y = layout[key][3] + GAP
-
-    sized = [_box_size(p, f, POINTS_MAX_W) for p in labels.get("points", []) if p]
-    y = H - MARGIN - sum(s[2] for s in sized) - GAP * max(len(sized) - 1, 0)
+    ascent, descent = f.getmetrics()
+    line_h = ascent + descent + LINE_GAP
+    wrapped = [_wrap(f"• {p}", f, POINTS_MAX_W) for p in labels.get("points", []) if p]
+    block_h = sum(len(w) for w in wrapped) * line_h - LINE_GAP + POINT_GAP * max(len(wrapped) - 1, 0)
+    y = H - MARGIN - block_h
     layout["points"] = []
-    for lines, w, h, lh in sized:
-        layout["points"].append(_draw_box(img, MARGIN, y, lines, w, h, lh, f))
-        y += h + GAP
+    for lines in wrapped:
+        box = _text(img, lines, f, y, TEXT_STROKE, x=MARGIN)
+        layout["points"].append(box)
+        y = box[3] - TEXT_STROKE + LINE_GAP + POINT_GAP
 
     logo = _logo()
     lx, ly = W - MARGIN - LOGO_SIZE, H - MARGIN - LOGO_SIZE

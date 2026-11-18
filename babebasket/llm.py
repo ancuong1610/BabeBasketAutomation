@@ -54,11 +54,10 @@ Trả về JSON đúng cấu trúc sau:
   "review_summary": "2–3 câu tiếng Việt tóm tắt review: khen gì, chê gì",
   "fit_for_vietnam": "1–2 câu: hợp với khách Việt nào, vì sao (khí hậu, thói quen)",
   "labels": {{
-    "title": "tên ngắn trên ảnh, có tên hãng, tối đa 32 ký tự (vd 'Mixa Urea Cica Repair+')",
-    "hero": "thành phần/con số nổi bật, tối đa 28 ký tự (vd '10% Urea & Amino acid'), hoặc \"\"",
-    "who_for": "1 dòng 'Dành cho ...', tối đa 45 ký tự",
-    "mode": "usage hoặc benefits",
-    "points": ["2–3 dòng ngắn, mỗi dòng tối đa 35 ký tự"]
+    "kind": "skincare | body | hair | fragrance | oral | supplement | other",
+    "title": "tên sản phẩm bằng tiếng Việt như người Việt hay gọi: loại sản phẩm + hãng + dòng, tối đa 34 ký tự (vd 'Kem dưỡng ẩm NIVEA Soft', 'Dầu dưỡng tóc Elvital Öl Magique'); giữ tên hãng/dòng gốc, dịch phần loại sản phẩm",
+    "subtitle": "1 dòng: dành cho ai hoặc điểm nổi bật nhất, tối đa 40 ký tự",
+    "points": ["2–3 dòng ngắn, mỗi dòng tối đa 36 ký tự, chọn theo kind (xem dưới)"]
   }},
   "captions": [
     {{"style": "everyday story", "text": "..."}},
@@ -67,9 +66,11 @@ Trả về JSON đúng cấu trúc sau:
     {{"style": "direct sales", "text": "..."}}
   ]
 }}
-Chữ trên ảnh (labels): mode = "usage" cho đồ tóc, tạo kiểu, ủ, serum, mặt nạ (sản phẩm cần biết cách dùng): \
-points = cách dùng ngắn + kết quả. mode = "benefits" cho kem đánh răng, dưỡng thể, sữa tắm, kem tay, \
-thực phẩm chức năng…: points = công dụng/thành phần, không hướng dẫn cách dùng.
+Chữ trên ảnh (labels): lấy từ official_claims, description, features, usage ở trên; không bịa. points theo kind:
+- skincare, body, oral: công dụng + thành phần chính (vd 'Cấp ẩm sâu tới 72 giờ', 'Vitamin E & dầu jojoba'); không ghi cách dùng.
+- hair: cách dùng ngắn theo bước + kết quả (vd 'Thoa lên tóc ẩm, không xả lại').
+- fragrance (nước hoa, body mist): mô tả mùi: hương đầu / hương giữa / hương cuối nếu có, hoặc cảm giác mùi.
+- supplement: công dụng nhà sản xuất công bố + liều dùng (vd '1 viên mỗi ngày').
 Bốn caption phải thật sự khác nhau. Caption "engagement question" là bài tương tác mềm, không bán trực tiếp. \
 Mỗi caption 2–5 câu, tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
 
@@ -87,7 +88,7 @@ NO_REVIEWS_NOTE = (
 NO_DETAILS_NOTE = (
     "\nKHÔNG có mô tả hay công dụng chính thức. Chỉ dùng những gì suy ra chắc chắn từ tên sản phẩm và loại sản phẩm; "
     "không bịa thành phần, con số hay công dụng đặc biệt (vd không tự suy 'tạo màu tóc' từ chữ 'Black'). "
-    "hero để \"\" nếu không chắc."
+    "subtitle và points không ghi con số hay thành phần nếu không chắc."
 )
 NO_REVIEWS_WARNING = "no reviews or description given: check the summary and claims"
 
@@ -162,24 +163,24 @@ def validate(draft: dict) -> list[str]:
     return problems
 
 
-LABEL_LIMITS = {"title": 32, "hero": 28, "who_for": 45, "point": 35}
+LABEL_LIMITS = {"title": 38, "subtitle": 44, "point": 40}  # prompt asks for 34/40/36; the image fits a bit more
+KINDS = ("skincare", "body", "hair", "fragrance", "oral", "supplement", "other")
 
 
 def image_labels(draft: dict) -> dict:
-    """The text for the post image, also for drafts made before title/hero/points existed."""
+    """The text for the post image, also for drafts made before subtitle/kind existed (who_for/hero/mode)."""
     labels = draft.get("labels") or {}
     if not isinstance(labels, dict):
         labels = {}
     points = labels.get("points") or labels.get("benefits") or []
     if not isinstance(points, list):
         points = [points]
-    mode = labels.get("mode") if labels.get("mode") in ("usage", "benefits") else "benefits"
+    subtitle = labels.get("subtitle") or labels.get("who_for") or labels.get("hero") or ""
     return {
         "title": str(labels.get("title") or ""),
-        "hero": str(labels.get("hero") or ""),
-        "who_for": str(labels.get("who_for") or ""),
+        "subtitle": str(subtitle),
         "points": [str(x) for x in points if x][:3],
-        "mode": mode,
+        "kind": labels.get("kind") if labels.get("kind") in KINDS else "other",
     }
 
 
@@ -192,15 +193,15 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
         if len(c.get("text", "")) > 500:
             out.append(f"caption {i} is too long for Threads ({len(c.get('text', ''))}/500)")
     raw = draft.get("labels") if isinstance(draft.get("labels"), dict) else {}
-    if raw.get("mode") not in ("usage", "benefits"):
-        out.append("labels.mode must be benefits or usage")
+    if raw.get("kind") not in KINDS:
+        out.append(f"labels.kind must be one of {', '.join(KINDS)}")
     raw_points = raw.get("points") or raw.get("benefits") or []
     if not 2 <= len(raw_points if isinstance(raw_points, list) else [raw_points]) <= 3:
         out.append("labels.points must have 2–3 lines")
     if not raw.get("title"):
         out.append("image has no title")
     labels = image_labels(draft)
-    lines = [(labels[k], LABEL_LIMITS[k]) for k in ("title", "hero", "who_for")]
+    lines = [(labels[k], LABEL_LIMITS[k]) for k in ("title", "subtitle")]
     lines += [(p, LABEL_LIMITS["point"]) for p in labels["points"]]
     for line, limit in lines:
         if len(line) > limit:
