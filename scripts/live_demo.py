@@ -2,8 +2,8 @@
 
 Real cards go to the approval channel and real taps/replies are read back. Uses its own
 database (data/demo/live.db), so the real pipeline's drafts are untouched. Threads is
-never called. The AI image model is replaced by pre-made images (each card says so),
-so no image is paid for.
+never called. With --scene/--edited the AI image model is replaced by pre-made images
+(each card says so); without them the real model is used.
 
     python3 scripts/live_demo.py start --product 1669820       # LLM draft (~$0.01) + caption card
     python3 scripts/live_demo.py watch --scene A.png --edited B.png --minutes 9
@@ -40,7 +40,8 @@ def start(product_id: str) -> None:
         cli.cmd_post(cfg, conn)
 
 
-def watch(scene_png: Path, edited_png: Path, minutes: float) -> None:
+def watch(scene_png: Path | None, edited_png: Path | None, minutes: float) -> None:
+    """Without --scene/--edited the real image model is used (paid, within the [image] caps)."""
     cfg = config.load()
     conn = db.connect(DB)
     original_card = discord.build_image_card
@@ -58,9 +59,10 @@ def watch(scene_png: Path, edited_png: Path, minutes: float) -> None:
 
     last = {}
     deadline = time.time() + minutes * 60
+    fake = scene_png is not None
     with mock.patch.object(cli, "DATA", DEMO), \
-            mock.patch.object(scene, "generate", side_effect=fake_scene), \
-            mock.patch.object(discord, "build_image_card", side_effect=card_with_note), \
+            mock.patch.object(scene, "generate", side_effect=fake_scene if fake else scene.generate), \
+            mock.patch.object(discord, "build_image_card", side_effect=card_with_note if fake else original_card), \
             mock.patch.object(threads, "publish", side_effect=no_threads):
         while time.time() < deadline:
             cli.cmd_check(cfg, conn)
@@ -83,8 +85,8 @@ def main() -> int:
     s = sub.add_parser("start")
     s.add_argument("--product", default="1669820")
     w = sub.add_parser("watch")
-    w.add_argument("--scene", type=Path, required=True)
-    w.add_argument("--edited", type=Path, required=True)
+    w.add_argument("--scene", type=Path, help="pre-made first image (omit both for the real image model)")
+    w.add_argument("--edited", type=Path, help="pre-made stand-in for edits")
     w.add_argument("--minutes", type=float, default=9)
     args = ap.parse_args()
     if args.cmd == "start":
