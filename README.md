@@ -100,9 +100,9 @@ All in `config.toml`: dm categories, shortlist size and thresholds, preferred br
 the pricing rule (exchange rate, shipping, markup), standing coupon per store, LLM model,
 Discord channel and owner.
 
-Prices only ever come from the store data. The LLM writes `{PRICE}` and the code fills
-in the computed sale price (e.g. `115🐠`). Captions using "tiền" or writing their own
-prices are sent back to the LLM to fix.
+Captions carry no price: they end by inviting customers to inbox the shop, and the owner
+quotes prices privately. Captions that mention a price or use "tiền" are sent back to the
+LLM to fix. The caption card still shows the store's shelf price (€) for the owner.
 
 ## Data sources
 

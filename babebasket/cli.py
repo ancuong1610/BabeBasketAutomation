@@ -76,8 +76,7 @@ def make_draft(product: dict, cfg: dict) -> dict:
     detail, reviews = enrich(product)
     quote = pricing.quote(product["price_eur"], product["store"], cfg)
     draft = llm.draft_post(product, detail, reviews, cfg)
-    warnings = llm.warnings(draft, had_reviews=bool(reviews))  # before the {PRICE} placeholder is filled in
-    draft = llm.fill_price(draft, quote["price_text"])
+    warnings = llm.warnings(draft, had_reviews=bool(reviews))
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
 
 

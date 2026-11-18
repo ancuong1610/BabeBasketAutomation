@@ -66,7 +66,6 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     fields = [
         {"name": "Nguồn", "value": badge, "inline": True},
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
-        {"name": "Sale price", "value": f"{quote['sale_k']}🐠 (margin ~{quote['margin_k']}🐠)", "inline": True},
         {"name": "Rating", "value": f"⭐ {product['rating']:.2f} · {product['review_count']} reviews", "inline": True},
     ]
     if warnings:

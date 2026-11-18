@@ -1,7 +1,7 @@
 """Draft post content with an LLM via OpenRouter.
 
-The LLM never writes prices: captions contain the literal placeholder {PRICE},
-which code replaces with the computed sale price.
+Captions carry no price at all (the owner quotes prices in private messages);
+a caption that mentions one is sent back to the LLM to fix.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ Giọng văn caption (tiếng Việt):
 - Nhẹ nhàng, thân mật như nói chuyện với bạn, vài emoji, dùng "nhé", "nhá", "nha", "nè".
 - Gọi người đọc là "các babe" hoặc "các bà"; shop tự xưng "sốp" hoặc "tui".
 - TUYỆT ĐỐI không dùng chữ "tiền"; nếu cần thì dùng "xèng".
-- Không viết giá bằng số. Chỗ nào cần giá thì ghi đúng chuỗi {PRICE} (code sẽ thay bằng giá, ví dụ "340🐠"), \
-  rồi tự thêm đơn vị và dung tích, ví dụ "{PRICE}/hũ 340ml" hoặc "{PRICE}/tuýp 75ml".
+- KHÔNG ghi giá trong caption: không con số giá, không "🐠", không "k", không đơn vị tiền. \
+  Khách muốn biết giá thì inbox sốp.
 - Không dùng thuật ngữ marketing kiểu "Glow-Up Complex"; dịch công dụng sang tiếng Việt đơn giản, \
   không phóng đại ("giúp da trông sáng hơn").
 - KHÔNG bịa trải nghiệm cá nhân (không viết "tui dùng rồi thấy..."). Có thể kể theo review của người mua ở Đức \
@@ -32,7 +32,7 @@ Giọng văn caption (tiếng Việt):
   công dụng nhà sản xuất công bố, không hứa hẹn chữa bệnh.
 - Nghĩ đến khách Việt: khí hậu nóng ẩm, nắng, nước cứng/clo, thói quen hằng ngày.
 - Nhãn trên ảnh (labels) và caption chỉ bằng tiếng Việt, không để lại từ tiếng Đức (Keratin, Vitamin C… thì được).
-- Thiên về bán hàng, kết bằng một lời rủ mua nhẹ nhàng (inbox/order sốp nha).
+- Thiên về bán hàng, kết bằng một lời rủ nhẹ nhàng (inbox sốp để hỏi giá/order nha).
 
 Câu mẫu đúng giọng của shop:
 - "Lên lại cho các babe mấy em ủ tóc yêu thích của sốp 🥰 tuần ko dùng ít nhất 1 lần là ko chịu được 😌"
@@ -158,8 +158,8 @@ def validate(draft: dict) -> list[str]:
         text = c.get("text", "")
         if re.search(r"\btiền\b", text, re.I):
             problems.append(f"caption {i} uses 'tiền'")
-        if re.search(r"\d+[.,]?\d*\s*(€|eur|đ|vnđ|vnd|k\b|nghìn|ngàn)", text, re.I):
-            problems.append(f"caption {i} writes a price itself")
+        if "{PRICE}" in text or re.search(r"\d+[.,]?\d*\s*(€|🐠|(eur|đ|vnđ|vnd|k|nghìn|ngàn)\b)", text, re.I):
+            problems.append(f"caption {i} mentions a price; captions must not contain prices")
     return problems
 
 
@@ -188,8 +188,6 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
     """Soft issues shown on the Discord card."""
     out = [] if had_reviews else [NO_REVIEWS_WARNING]
     for i, c in enumerate(draft.get("captions", []), 1):
-        if c.get("style") != "engagement question" and "{PRICE}" not in c.get("text", ""):
-            out.append(f"caption {i} has no price")
         if len(c.get("text", "")) > 500:
             out.append(f"caption {i} is too long for Threads ({len(c.get('text', ''))}/500)")
     raw = draft.get("labels") if isinstance(draft.get("labels"), dict) else {}
@@ -207,12 +205,6 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
         if len(line) > limit:
             out.append(f"label too long for the image: {line[:30]}…")
     return out
-
-
-def fill_price(draft: dict, price_text: str) -> dict:
-    for c in draft.get("captions", []):
-        c["text"] = c.get("text", "").replace("{PRICE}", price_text)
-    return draft
 
 
 def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, attempts: int = 2) -> dict:

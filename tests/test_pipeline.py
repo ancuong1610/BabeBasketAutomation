@@ -67,10 +67,10 @@ GOOD_DRAFT = {
         "kind": "hair", "points": ["Ủ 5 phút sau khi gội", "Tóc mượt hơn"],
     },
     "captions": [
-        {"style": "everyday story", "text": "Các babe ơi {PRICE}/tuýp 200ml nha 🥰"},
-        {"style": "curiosity hook", "text": "Ủa sao thơm vậy nè {PRICE}/tuýp 200ml"},
+        {"style": "everyday story", "text": "Các babe ơi tuýp 200ml này thơm lắm nha 🥰"},
+        {"style": "curiosity hook", "text": "Ủa sao thơm vậy nè, inbox sốp hỏi giá nha"},
         {"style": "engagement question", "text": "Các bà ủ tóc mấy lần một tuần nè?"},
-        {"style": "direct sales", "text": "Order sốp nha {PRICE}/tuýp 200ml"},
+        {"style": "direct sales", "text": "Order sốp nha, tuýp 200ml dùng cả tháng"},
     ],
 }
 
@@ -134,17 +134,25 @@ class LlmOutputTest(unittest.TestCase):
     def test_forbidden_word_and_llm_prices_are_caught(self):
         bad = {**GOOD_DRAFT, "captions": [{"style": "a", "text": "Tiết kiệm tiền nha"},
                                           {"style": "b", "text": "Chỉ 120k thôi"},
-                                          {"style": "c", "text": "Giá 2,75 €"}]}
+                                          {"style": "c", "text": "Giá 2,75 €"},
+                                          {"style": "d", "text": "Chỉ 325🐠/hũ"},
+                                          {"style": "e", "text": "Chỉ {PRICE} thôi"}]}
         problems = llm.validate(bad)
         self.assertIn("caption 1 uses 'tiền'", problems)
-        self.assertIn("caption 2 writes a price itself", problems)
-        self.assertIn("caption 3 writes a price itself", problems)
+        for i in (2, 3, 4, 5):
+            self.assertIn(f"caption {i} mentions a price; captions must not contain prices", problems)
 
-    def test_fill_price(self):
-        import copy
+    def test_sizes_are_not_mistaken_for_prices(self):
+        ok = {**GOOD_DRAFT, "captions": [{"style": "a", "text": "Hũ 400ml, 10% Glycerin, 3.600 đánh giá 4.8 sao"}] * 3}
+        self.assertEqual(llm.validate(ok), [])
 
-        filled = llm.fill_price(copy.deepcopy(GOOD_DRAFT), "115🐠")
-        self.assertIn("115🐠/tuýp 200ml", filled["captions"][0]["text"])
+    def test_draft_has_no_price_in_captions(self):
+        from babebasket import cli
+
+        with mock.patch.object(cli, "enrich", return_value=({}, [])), \
+                mock.patch.object(llm, "draft_post", return_value=dict(GOOD_DRAFT)):
+            payload = cli.make_draft(product("1"), CFG)
+        self.assertEqual(payload["draft"]["captions"], GOOD_DRAFT["captions"])
 
     def test_parse_json_reply_with_code_fence(self):
         self.assertEqual(llm.parse_json_reply('Here:\n```json\n{"a": 1}\n```'), {"a": 1})
@@ -153,7 +161,8 @@ class LlmOutputTest(unittest.TestCase):
         p = product("1")
         msgs = llm.build_messages(p, {"breadcrumbs": ["Gesundheit", "Nahrungsergänzungsmittel"]}, [])
         self.assertIn("thực phẩm chức năng", msgs[1]["content"])
-        self.assertIn("{PRICE}", msgs[0]["content"])
+        self.assertIn("KHÔNG ghi giá", msgs[0]["content"])
+        self.assertNotIn("{PRICE}", msgs[0]["content"])
 
 
 class DiscordTest(unittest.TestCase):
