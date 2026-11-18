@@ -24,17 +24,31 @@ class ClassifyTest(unittest.TestCase):
             ("Haut Haare Nägel Kapseln", "Wohlbefinden & Stärkung"): "extra",
             ("Sättigungskapseln", "Abnehmprodukte"): "extra",
             ("Geschenkset Duschpflege", "Geschenksets; Duschgel"): "extra",
+            ("Shampoo & Conditioner After Sun 2in1", "Conditioner; Shampoo"): "hair",
+            ("Styling Creme Curlz", "Locken Produkte; Haargel"): "hair",
+            ("Hitzeschutzspray Keratin", "Hitzeschutzspray & Co."): "hair",
+            ("Lippenmaske Smushy SOS", "Lippenpflege"): "extra",
+            ("Anti Pickel Patches", "Anti Pickel & Mitesser"): "extra",
+            ("Augen Roll-On Aqua", "Gesichtspflege"): "extra",
+            ("Bartbalsam Barber Club", "Bartpflege"): "extra",
+            ("Kapseln für den Nährstoffbedarf der Haarwurzel", "Unterstützung fürs Haar"): "extra",
         }
         for (name, cats), group in cases.items():
             self.assertEqual(cls(name, cats), group, name)
 
     def test_never_sold(self):
-        for name, cats in [("Trockenshampoo", "Haarstyling"), ("Haarspray Extra Strong", "Haarstyling"),
-                           ("Hornhautraspel", "Fußpflege"), ("Badeschwamm", "Körperreinigung"),
+        for name, cats in [("Hornhautraspel", "Fußpflege"), ("Badeschwamm", "Körperreinigung"),
                            ("Massageöl", "Körperöl"), ("Vitamin D3 Tabletten", "Vitamine"),
                            ("Zahnpasta", "Zahnpasta"), ("Haarglätteisen", "Haarstyling"),
-                           ("Eau de Parfum", "Parfum"), ("Spielzeug", "Spielwaren")]:
+                           ("Eau de Parfum", "Parfum"), ("Spielzeug", "Spielwaren"),
+                           ("Selbstbräuner Schaum", "Selbstbräuner & Bräunungsbeschleuniger"),
+                           ("Stylinggel Kleber 4 Brows & Edges", "Haargel"),
+                           ("Einlegesohlen", "Einlegesohlen")]:
             self.assertIsNone(cls(name, cats), name)
+
+    def test_sprays_are_left_to_the_warning_check(self):
+        self.assertEqual(cls("Trockenshampoo", "Haarstyling"), "hair")
+        self.assertEqual(cls("Haarspray Extra Strong", "Haarstyling"), "hair")
 
     def test_only_jean_and_len_hair_perfume(self):
         self.assertEqual(cls("Haarparfum Rose & Cedarwood", "Haarstyling", "Jean&Len"), "hair")
@@ -46,6 +60,10 @@ DRY_SHAMPOO = {"descriptionGroups": [
     {"header": "Produktbeschreibung", "contentBlock": [{"texts": ["Trockenshampoo"]}]},
     {"header": "Warnhinweise", "contentBlock": [{"texts": [
         "Extrem entzündbares Aerosol. Behälter steht unter Druck: Kann bei Erwärmung bersten."]}]},
+]}
+AEROSOL_NO_WARNING = {"descriptionGroups": [
+    {"header": "Warnhinweise", "contentBlock": [{"texts": ["Nicht auf gereizte Haut sprühen."]}]},
+    {"header": "Inhaltsstoffe", "contentBlock": [{"texts": ["INGREDIENTS: Butane, Isobutane, Propane, Parfum"]}]},
 ]}
 PUMP_SPRAY = {"descriptionGroups": [
     {"header": "Warnhinweise", "contentBlock": [{"texts": ["Kontakt mit den Augen vermeiden."]}]},
@@ -67,6 +85,22 @@ class SafetyTest(unittest.TestCase):
         check = self.checker({"1": DRY_SHAMPOO, "2": PUMP_SPRAY})
         self.assertEqual(check({"store": "dm", "product_id": "1"})[0], False)
         self.assertEqual(check({"store": "dm", "product_id": "2"}), (True, ""))
+
+    def test_spray_without_fire_warning_ships(self):
+        self.assertEqual(self.checker({"3": AEROSOL_NO_WARNING})({"store": "dm", "product_id": "3", "name": "Deospray"}),
+                         (True, ""))
+
+    def test_fire_warning_on_a_non_spray_ships(self):
+        gel = {"descriptionGroups": [{"header": "Warnhinweise", "contentBlock": [
+            {"texts": ["Flüssigkeit und Dampf leicht entzündbar."]}]}]}
+        self.assertTrue(self.checker({"4": gel})({"store": "dm", "product_id": "4", "name": "Handgel"})[0])
+
+    def test_fire_warning_on_a_spray_named_can_is_blocked(self):
+        liquid_warning = {"descriptionGroups": [{"header": "Warnhinweise", "contentBlock": [
+            {"texts": ["Entzündbar. Von Zündquellen fernhalten."]}]}]}
+        ok, reason = self.checker({"5": liquid_warning})({"store": "dm", "product_id": "5", "name": "Haarspray Strong"})
+        self.assertFalse(ok)
+        self.assertIn("fire warning", reason)
 
     def test_result_is_cached(self):
         check = self.checker({"1": DRY_SHAMPOO})

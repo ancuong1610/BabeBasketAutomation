@@ -4,9 +4,9 @@ Customers: Vietnamese girls and young women (high school to ~35), self-care cons
 Groups (daily quota in config.toml [groups]):
   hair  - shampoo, conditioner, masks, leave-in, oils, styling (no aerosols)
   body  - body lotion/cream/oil, deo (roll-on/stick), hand, foot, shower, scrub, bath salt, intimate care
-  extra - sun care, skincare, beauty supplements (skin/hair/nails, weight management),
+  extra - sun care, skincare and lip care, beauty supplements (skin/hair/nails, weight management),
           gift sets, men's products; must be very well rated (stricter thresholds)
-Never: aerosols / anything with a flammability warning (cannot be shipped to Vietnam),
+Never: spray cans that carry a fire warning (cannot be shipped to Vietnam; see make_safety_checker),
 electrical devices, accessories (brushes, sponges, ...), perfume except Jean & Len hair perfume.
 """
 
@@ -19,9 +19,10 @@ from typing import Callable
 
 # --- exclusions --------------------------------------------------------------------------
 EXCLUDE = re.compile(
-    r"trockenshampoo|dry shampoo|haarspray|bürste|kamm\b|haargummi|haarband|haarreif|haarklammer|spange|"
+    r"bürste|kamm\b|haargummi|haarband|haarreif|haarklammer|spange|"
     r"schwamm|sponge|massage|föhn|glätteisen|lockenstab|rasierer|epilierer|elektrisch|feile|raspel|hobel|"
-    r"nagellack|zahnpasta|zahnbürste|socken|handschuh|waschhandschuh|pinsel|wattepad",
+    r"nagellack|zahnpasta|zahnbürste|socken|handschuh|waschhandschuh|pinsel|wattepad|einlegesohle|"
+    r"selbstbräuner|bräunungs|brow|augenbraue|muskeln|gelenke",
     re.I,
 )
 PERFUME = re.compile(r"parfum|perfume|eau de |body ?mist|duftspray", re.I)
@@ -32,14 +33,16 @@ BEAUTY_SUPPLEMENT = re.compile(r"haut|haar|nägel|biotin|kollagen|collagen|hyalu
 # --- groups (checked in this order) ------------------------------------------------------
 GROUP_RULES = [
     ("extra", re.compile(r"geschenkset|geschenk|adventskalender|\bset\b", re.I)),          # gift sets
-    ("extra", re.compile(r"für männer|\bmen\b|herren", re.I)),                              # men's products
-    ("extra", SUPPLEMENT_CATS),                                                             # beauty supplements
-    ("extra", re.compile(r"sonne|\blsf\b|\bspf\b|after sun", re.I)),                         # sun care
+    ("extra", re.compile(r"für männer|\bmen\b|herren|\bbart", re.I)),                       # men's products
+    ("extra", re.compile(f"{SUPPLEMENT_CATS.pattern}|{SUPPLEMENT_FORM.pattern}", re.I)),     # beauty supplements
     ("hair", re.compile(r"shampoo|conditioner|spülung|haarkur|haarmaske|leave-in|haaröl|haarserum|"
-                        r"haarstyling|haarpflege|haarparfum|haarmilch|haarwasser|haarpuder", re.I)),
+                        r"haarstyling|haarpflege|haarparfum|haarmilch|haarwasser|haarpuder|haargel|stylinggel|"
+                        r"haarwachs|styling|locken|hitzeschutz|frizz|volumenspray|schaumfestiger", re.I)),
+    ("extra", re.compile(r"sonne|\blsf\b|\bspf\b|after sun", re.I)),                         # sun care
     ("body", re.compile(r"bodylotion|körper|hautcreme|deo|handcreme|handmaske|fuß|duschgel|dusch|"
                         r"peeling|body scrub|badesalz|badezusatz|intim", re.I)),
-    ("extra", re.compile(r"gesicht|tagescreme|nachtcreme|serum|augencreme|feuchtigkeitscreme", re.I)),  # skincare
+    ("extra", re.compile(r"gesicht|tagescreme|nachtcreme|serum|augen|feuchtigkeitscreme|lippe|pickel|mitesser",
+                         re.I)),                                                            # skincare, lip care
 ]
 
 
@@ -67,17 +70,36 @@ def is_gift_set(product: dict) -> bool:
 
 
 # --- flammability ------------------------------------------------------------------------
-FLAMMABLE = re.compile(r"entzündbar|aerosol|unter druck|\bH22[2-9]\b|flammable", re.I)
+# Not shippable = BOTH a fire warning AND a pressurised spray can (owner's rule, 2026-11-18).
+# A spray without the warning, or a non-spray with one, ships normally.
+FIRE_WARNING = re.compile(r"entzündbar|entzündlich|flammable|\bH22[0-9]\b", re.I)
+SPRAY_CAN_WARNING = re.compile(r"aerosol|unter druck|druckbehälter", re.I)
+SPRAY_CAN_NAME = re.compile(r"spray|aerosol|schaum|mousse|trockenshampoo", re.I)
 ROSSMANN_SPRAY = re.compile(r"spray|aerosol|haarschaum|schaumfestiger|rasierschaum", re.I)
 
 
-def warning_text(dm_detail_raw: dict) -> str:
+def _section_text(dm_detail_raw: dict, header: str) -> str:
     parts = []
     for group in dm_detail_raw.get("descriptionGroups", []):
-        if re.search(r"warn|aufbewahrung|sicherheit", group.get("header", ""), re.I):
+        if re.search(header, group.get("header", ""), re.I):
             for block in group.get("contentBlock", []):
                 parts += block.get("texts", []) + block.get("bulletpoints", [])
+                parts += [f"{d.get('title')}: {d.get('description')}" for d in block.get("descriptionList", [])]
     return " ".join(parts)
+
+
+def warning_text(dm_detail_raw: dict) -> str:
+    return _section_text(dm_detail_raw, r"warn|aufbewahrung|sicherheit|gefahr")
+
+
+def flammable_reason(dm_detail_raw: dict, name: str = "") -> str:
+    """Why a dm product cannot be shipped (fire warning AND spray can), or '' if it can."""
+    warnings = warning_text(dm_detail_raw)
+    fire = FIRE_WARNING.search(warnings)
+    if not fire:
+        return ""
+    can = SPRAY_CAN_WARNING.search(warnings) or SPRAY_CAN_NAME.search(name)
+    return f"spray can with fire warning ({fire.group(0)}, {can.group(0)})" if can else ""
 
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS product_checks (
@@ -107,14 +129,14 @@ def make_safety_checker(conn: sqlite3.Connection, fetch_detail: Callable[[str], 
         if cached:
             return not cached[0], cached[1] or ""
         if store == "dm":
-            match = FLAMMABLE.search(warning_text(fetch_detail(pid)))
+            reason = flammable_reason(fetch_detail(pid), product.get("name", ""))
             time.sleep(delay)
         else:
             match = ROSSMANN_SPRAY.search(product.get("name", ""))
-        reason = f"flammable/pressurised ({match.group(0)})" if match else ""
+            reason = f"spray/mousse by name ({match.group(0)})" if match else ""
         conn.execute("INSERT OR REPLACE INTO product_checks VALUES (?, ?, ?, ?, ?)",
-                     (store, pid, int(bool(match)), reason, db.now()))
+                     (store, pid, int(bool(reason)), reason, db.now()))
         conn.commit()
-        return not match, reason
+        return not reason, reason
 
     return check

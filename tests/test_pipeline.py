@@ -116,7 +116,6 @@ class ShortlistTest(unittest.TestCase):
 
     def test_never_sold_types_are_left_out(self):
         db.upsert_products(self.conn, [
-            item("dry", "A", "Trockenshampoo", "Haarstyling", 4.9, 3000),
             item("brush", "B", "Haarbürste", "Haarpflege", 4.9, 3000),
             item("vit", "C", "Vitamin D3 Tabletten", "Vitamine", 4.9, 3000),
             item("perf", "D", "Eau de Parfum", "Parfum", 4.9, 3000),
