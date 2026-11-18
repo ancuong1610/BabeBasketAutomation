@@ -52,7 +52,10 @@ def request_json(
                 time.sleep(wait)
                 backoff *= 2
                 continue
-            detail = err.read()[:500].decode(errors="replace")
+            raw_err = err.read()
+            if raw_err[:2] == b"\x1f\x8b":
+                raw_err = gzip.decompress(raw_err)
+            detail = raw_err[:500].decode(errors="replace")
             raise RuntimeError(f"HTTP {err.code} for {method} {url.split('?')[0]}: {detail}") from err
     raise RuntimeError("unreachable")
 
@@ -96,6 +99,9 @@ def request_multipart(url: str, *, fields: dict[str, str], files: list[tuple[str
                 print(f"429 from {url.split('?')[0]}, retrying in {wait:.0f}s", file=sys.stderr)
                 time.sleep(wait)
                 continue
-            detail = err.read()[:500].decode(errors="replace")
+            raw_err = err.read()
+            if raw_err[:2] == b"\x1f\x8b":
+                raw_err = gzip.decompress(raw_err)
+            detail = raw_err[:500].decode(errors="replace")
             raise RuntimeError(f"HTTP {err.code} for POST {url.split('?')[0]}: {detail}") from err
     raise RuntimeError("unreachable")
