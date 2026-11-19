@@ -16,17 +16,20 @@ from babebasket.http import request_json
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 SYSTEM_PROMPT = """Bạn là người viết nội dung cho "babe basket", một shop online ở Hà Nội bán đồ chăm sóc bản thân \
-được tuyển chọn từ các drugstore ở Đức (dm, Rossmann). Khách đặt trước, hàng về sau 3–4 tuần, cọc 50%.
+được tuyển chọn từ các drugstore ở Đức (dm, Rossmann). Thông tin mua hàng (giá, cọc, thời gian) sốp để ở comment, \
+KHÔNG bao giờ nằm trong caption.
 
 Khách hàng: con gái Việt Nam từ học sinh cấp 3 đến khoảng 30–35 tuổi (học sinh, sinh viên, người mới đi làm), \
 quan tâm làm đẹp, dưỡng da, chăm tóc, chăm body. Viết cho đúng đối tượng này.
 
 Giọng văn caption (tiếng Việt):
-- Nhẹ nhàng, thân mật như nói chuyện với bạn, vài emoji, dùng "nhé", "nhá", "nha", "nè".
+- Viết như một bạn gái thật đang đăng Threads kể cho bạn bè: câu ngắn, tự nhiên, nói như nói chuyện, \
+  1–3 emoji. KHÔNG viết giọng quảng cáo hay giọng "content marketing".
+- Không mở đầu bằng thời tiết; cả 4 caption nhắc thời tiết tối đa 1 lần, và chỉ khi thật sự liên quan.
+- Dùng "nhé", "nhá", "nha", "nè" vừa phải, không câu nào cũng có.
 - Gọi người đọc là "các babe" hoặc "các bà"; shop tự xưng "sốp" hoặc "tui".
 - TUYỆT ĐỐI không dùng chữ "tiền"; nếu cần thì dùng "xèng".
-- KHÔNG ghi giá trong caption: không con số giá, không "🐠", không "k", không đơn vị tiền. \
-  Khách muốn biết giá thì inbox sốp.
+- KHÔNG ghi giá trong caption: không con số giá, không "🐠", không "k", không đơn vị tiền.
 - Không dùng thuật ngữ marketing kiểu "Glow-Up Complex"; dịch công dụng sang tiếng Việt đơn giản, \
   không phóng đại ("giúp da trông sáng hơn").
 - KHÔNG bịa trải nghiệm cá nhân (không viết "tui dùng rồi thấy..."). Có thể kể theo review của người mua ở Đức \
@@ -39,7 +42,10 @@ Giọng văn caption (tiếng Việt):
   "giữ dáng", "cảm giác no lâu", "eo gọn hơn khi kết hợp ăn uống lành mạnh", và chỉ theo đúng công dụng \
   nhà sản xuất ghi. Không nhắm tới học sinh.
 - Nhãn trên ảnh (labels) và caption chỉ bằng tiếng Việt, không để lại từ tiếng Đức (Keratin, Vitamin C… thì được).
-- Thiên về bán hàng, kết bằng một lời rủ nhẹ nhàng (inbox sốp để hỏi giá/order nha).
+- Caption CHỈ nói về sản phẩm: nó làm gì, review bên Đức nói gì, hợp với ai. KHÔNG kêu gọi mua và TUYỆT ĐỐI \
+  không dùng các từ: order, đặt hàng, đặt trước, pre-order, hàng về, về hàng, cọc, inbox, ib, nhắn sốp, ship, \
+  gom hàng, chốt đơn, giữ slot, còn hàng, số lượng có hạn, "3–4 tuần" (Threads bóp tương tác các bài bán hàng; \
+  thông tin mua hàng nằm ở comment).
 
 Câu mẫu đúng giọng của shop:
 - "Lên lại cho các babe mấy em ủ tóc yêu thích của sốp 🥰 tuần ko dùng ít nhất 1 lần là ko chịu được 😌"
@@ -69,8 +75,8 @@ Trả về JSON đúng cấu trúc sau:
   "captions": [
     {{"style": "everyday story", "text": "..."}},
     {{"style": "curiosity hook", "text": "..."}},
-    {{"style": "engagement question", "text": "..."}},
-    {{"style": "direct sales", "text": "..."}}
+    {{"style": "one-liner", "text": "..."}},
+    {{"style": "product highlights", "text": "..."}}
   ]
 }}
 Chữ trên ảnh (labels): lấy từ official_claims, description, features, usage ở trên; không bịa. points theo kind:
@@ -78,8 +84,14 @@ Chữ trên ảnh (labels): lấy từ official_claims, description, features, u
 - hair: cách dùng ngắn theo bước + kết quả (vd 'Thoa lên tóc ẩm, không xả lại').
 - fragrance (nước hoa, body mist): mô tả mùi: hương đầu / hương giữa / hương cuối nếu có, hoặc cảm giác mùi.
 - supplement: công dụng nhà sản xuất công bố + liều dùng (vd '1 viên mỗi ngày').
-Bốn caption phải thật sự khác nhau. Caption "engagement question" là bài tương tác mềm, không bán trực tiếp. \
-Mỗi caption 2–5 câu, tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
+Bốn caption phải thật sự khác nhau (sốp đăng xoay vòng cả bốn kiểu):
+- "everyday story": một tình huống đời thường gần gũi dẫn tới sản phẩm, 2–4 câu.
+- "curiosity hook": mở bằng một câu gây tò mò, rồi 1–3 câu giải thích vì sao.
+- "one-liner": ĐÚNG MỘT câu ngắn, hút cực mạnh, tối đa khoảng 15 từ và 1 emoji, không giải thích thêm. \
+Kiểu: "Ơ sao giờ mình mới biết đến em này 😭", "Mọi người biết cái này chưa?", "Sao cái này hay thế mà ít ai \
+biết nhỉ", "Con này đỉnh thật sự luôn á 😮‍💨".
+- "product highlights": nói thẳng 2–3 điểm mạnh nhất của sản phẩm, 2–4 câu.
+Các caption (trừ one-liner) tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
 
 HANOI_SEASON = {
     1: "đông, lạnh khô", 2: "cuối đông, nồm ẩm", 3: "xuân, nồm ẩm", 4: "xuân, ấm dần", 5: "đầu hè, nóng",
@@ -166,6 +178,12 @@ def parse_json_reply(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
+# Selling words stay out of captions (Threads cuts the reach of sales posts); purchase info goes in the comment.
+SALES_WORDS = re.compile(
+    r"\border\b|pre-?order|đặt\s*hàng|đặt\s*trước|hàng\s*về|về\s*hàng|\bcọc\b|inbox|\bib\b|nhắn\s*(cho\s*)?sốp|"
+    r"\bship\b|gom\s*hàng|chốt\s*đơn|giữ\s*slot|còn\s*hàng|số\s*lượng\s*có\s*hạn|3\s*[-–]\s*4\s*tuần", re.I)
+ONE_LINER_MAX = 120
+
 # Words Threads/Instagram punish: weight-loss products must be described indirectly.
 SENSITIVE = re.compile(r"giảm\s*cân|giảm\s*mỡ|đốt\s*(cháy\s*)?mỡ|tan\s*mỡ|giảm\s*béo|weight\s*loss", re.I)
 
@@ -186,6 +204,12 @@ def validate(draft: dict) -> list[str]:
         sensitive = SENSITIVE.search(text)
         if sensitive:
             problems.append(f"caption {i} uses the sensitive word '{sensitive.group(0)}'; say it indirectly")
+        sales = SALES_WORDS.search(text)
+        if sales:
+            problems.append(f"caption {i} uses the selling word '{sales.group(0)}'; captions only talk about "
+                            "the product (purchase info goes in the comment)")
+        if c.get("style") == "one-liner" and (len(text) > ONE_LINER_MAX or len(re.findall(r"[.!?…]+\s+\S", text)) > 0):
+            problems.append(f"caption {i} (one-liner) must be ONE short sentence")
         if "{PRICE}" in text or re.search(r"\d+[.,]?\d*\s*(€|🐠|(eur|đ|vnđ|vnd|k|nghìn|ngàn)\b)", text, re.I):
             problems.append(f"caption {i} mentions a price; captions must not contain prices")
     return problems
@@ -235,7 +259,7 @@ def warnings(draft: dict, had_reviews: bool = True) -> list[str]:
     return out
 
 
-def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, attempts: int = 2,
+def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, attempts: int = 3,
                pair: dict | None = None, pair_detail: dict | None = None) -> dict:
     llm = cfg["llm"]
     messages = build_messages(product, detail, reviews, pair=pair, pair_detail=pair_detail)

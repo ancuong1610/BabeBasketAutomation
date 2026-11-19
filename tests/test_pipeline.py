@@ -187,9 +187,9 @@ GOOD_DRAFT = {
     },
     "captions": [
         {"style": "everyday story", "text": "Các babe ơi tuýp 200ml này thơm lắm nha 🥰"},
-        {"style": "curiosity hook", "text": "Ủa sao thơm vậy nè, inbox sốp hỏi giá nha"},
-        {"style": "engagement question", "text": "Các bà ủ tóc mấy lần một tuần nè?"},
-        {"style": "direct sales", "text": "Order sốp nha, tuýp 200ml dùng cả tháng"},
+        {"style": "curiosity hook", "text": "Ủa sao thơm vậy nè? Review bên Đức bảo ủ 5 phút là tóc mềm hẳn."},
+        {"style": "one-liner", "text": "Ơ sao giờ mình mới biết đến em này 😭"},
+        {"style": "product highlights", "text": "Tuýp 200ml dùng cả tháng, tóc mượt mà không bết."},
     ],
 }
 
@@ -260,6 +260,32 @@ class LlmOutputTest(unittest.TestCase):
         self.assertIn("caption 1 uses 'tiền'", problems)
         for i in (2, 3, 4, 5):
             self.assertIn(f"caption {i} mentions a price; captions must not contain prices", problems)
+
+    def test_selling_words_are_refused(self):
+        for text in ["Order sốp nha", "Inbox sốp liền nha", "Hàng về sau 3–4 tuần", "cọc 50% thôi",
+                     "các bà nhắn sốp nha", "đặt hàng sớm nha", "chốt đơn liền", "pre-order đợt này"]:
+            bad = {**GOOD_DRAFT, "captions": [{"style": "everyday story", "text": text}] * 3}
+            self.assertTrue(any("selling word" in p for p in llm.validate(bad)), text)
+
+    def test_shop_slang_is_allowed(self):
+        ok = {**GOOD_DRAFT, "captions": [{"style": "everyday story",
+                                          "text": "Đúng là chân ái, cứu cánh cho tóc khô, review khen nức nở, xịn sò ghê"}] * 3}
+        self.assertEqual(llm.validate(ok), [])
+
+    def test_one_liner_must_be_one_short_sentence(self):
+        long = {**GOOD_DRAFT, "captions": GOOD_DRAFT["captions"][:2] + [
+            {"style": "one-liner", "text": "Ơ sao giờ mình mới biết. Em này cấp ẩm cực tốt luôn á các bà ơi."}]}
+        self.assertTrue(any("one-liner" in p for p in llm.validate(long)))
+        self.assertEqual(llm.validate(GOOD_DRAFT), [])
+
+    def test_prompt_asks_for_the_four_rotating_styles_without_sales_talk(self):
+        msgs = llm.build_messages(product("1"), {}, [])
+        system, user = msgs[0]["content"], msgs[1]["content"]
+        for style in ("everyday story", "curiosity hook", "one-liner", "product highlights"):
+            self.assertIn(style, user)
+        self.assertNotIn("engagement question", user)
+        self.assertNotIn("cọc 50%", system)
+        self.assertIn("comment", system)
 
     def test_weight_loss_words_are_refused(self):
         for text in ["Giúp giảm cân nhanh", "đốt mỡ bụng", "giảm  mỡ hiệu quả", "tan mỡ", "Weight loss"]:

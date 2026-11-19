@@ -199,8 +199,8 @@ class TokenRefreshTest(unittest.TestCase):
 class CaptionLengthTest(unittest.TestCase):
     def test_caption_over_threads_limit_is_flagged(self):
         from babebasket import llm
-        draft = {"captions": [{"style": "direct sales", "text": "{PRICE} " + "x" * 520},
-                              {"style": "direct sales", "text": "{PRICE} ngắn"}],
+        draft = {"captions": [{"style": "product highlights", "text": "{PRICE} " + "x" * 520},
+                              {"style": "product highlights", "text": "{PRICE} ngắn"}],
                  "labels": {"title": "T", "mode": "usage", "points": ["a", "b"]}}
         w = llm.warnings(draft)
         self.assertIn("caption 1 is too long for Threads (528/500)", w)
