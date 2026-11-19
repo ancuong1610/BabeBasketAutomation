@@ -267,6 +267,21 @@ class LlmOutputTest(unittest.TestCase):
             bad = {**GOOD_DRAFT, "captions": [{"style": "everyday story", "text": text}] * 3}
             self.assertTrue(any("selling word" in p for p in llm.validate(bad)), text)
 
+    def test_weather_and_cities_are_refused(self):
+        for text in ["Hà Nội mấy hôm nay hanh khô quá", "Trời nóng thế này", "mùa đông da khô",
+                     "Sài Gòn nắng gắt", "thời tiết thất thường"]:
+            bad = {**GOOD_DRAFT, "captions": [{"style": "everyday story", "text": text}] * 3}
+            self.assertTrue(any("no weather" in p for p in llm.validate(bad)), text)
+
+    def test_sun_care_can_still_talk_about_sun(self):
+        ok = {**GOOD_DRAFT, "captions": [{"style": "everyday story", "text": "Kem chống nắng nhẹ tênh, đi nắng cả ngày"}] * 3}
+        self.assertEqual(llm.validate(ok), [])
+
+    def test_prompt_has_no_city_or_season(self):
+        user = llm.build_messages(product("1"), {}, [])[1]["content"]
+        self.assertNotIn("Hà Nội", user)
+        self.assertNotIn("mùa ở", user)
+
     def test_shop_slang_is_allowed(self):
         ok = {**GOOD_DRAFT, "captions": [{"style": "everyday story",
                                           "text": "Đúng là chân ái, cứu cánh cho tóc khô, review khen nức nở, xịn sò ghê"}] * 3}

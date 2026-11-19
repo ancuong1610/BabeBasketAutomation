@@ -6,7 +6,6 @@ a caption that mentions one is sent back to the LLM to fix.
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import re
 
@@ -15,7 +14,7 @@ from babebasket.http import request_json
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-SYSTEM_PROMPT = """Bạn là người viết nội dung cho "babe basket", một shop online ở Hà Nội bán đồ chăm sóc bản thân \
+SYSTEM_PROMPT = """Bạn là người viết nội dung cho "babe basket", một shop online bán đồ chăm sóc bản thân \
 được tuyển chọn từ các drugstore ở Đức (dm, Rossmann). Thông tin mua hàng (giá, cọc, thời gian) sốp để ở comment, \
 KHÔNG bao giờ nằm trong caption.
 
@@ -25,7 +24,8 @@ quan tâm làm đẹp, dưỡng da, chăm tóc, chăm body. Viết cho đúng đ
 Giọng văn caption (tiếng Việt):
 - Viết như một bạn gái thật đang đăng Threads kể cho bạn bè: câu ngắn, tự nhiên, nói như nói chuyện, \
   1–3 emoji. KHÔNG viết giọng quảng cáo hay giọng "content marketing".
-- Không mở đầu bằng thời tiết; cả 4 caption nhắc thời tiết tối đa 1 lần, và chỉ khi thật sự liên quan.
+- KHÔNG nhắc thời tiết, mùa (hanh khô, se lạnh, nồm, trời nóng…) hay tên thành phố (Hà Nội, Sài Gòn…): khách ở \
+  khắp Việt Nam và bài đăng vào nhiều thời điểm, nhắc thời tiết dễ sai và nghe dập khuôn.
 - Dùng "nhé", "nhá", "nha", "nè" vừa phải, không câu nào cũng có.
 - Gọi người đọc là "các babe" hoặc "các bà"; shop tự xưng "sốp" hoặc "tui".
 - TUYỆT ĐỐI không dùng chữ "tiền"; nếu cần thì dùng "xèng".
@@ -36,7 +36,7 @@ Giọng văn caption (tiếng Việt):
   ("review bên Đức khen...").
 - Chỉ dựa vào công dụng do nhà sản xuất công bố và review được cung cấp. Thực phẩm chức năng/thuốc: chỉ nhắc \
   công dụng nhà sản xuất công bố, không hứa hẹn chữa bệnh.
-- Nghĩ đến khách Việt: khí hậu nóng ẩm, nắng, nước cứng/clo, thói quen hằng ngày.
+- Nghĩ đến khách Việt khắp cả nước: nhu cầu và thói quen hằng ngày (tóc nhuộm/tẩy, da dầu/da khô, đi học, đi làm…).
 - Sản phẩm hỗ trợ vóc dáng / kiểm soát cân nặng: viết thật khéo, TUYỆT ĐỐI không dùng các từ "giảm cân", \
   "giảm mỡ", "đốt mỡ", "tan mỡ", "giảm béo" (Threads/Instagram sẽ bóp tương tác). Nói gián tiếp, ví dụ \
   "giữ dáng", "cảm giác no lâu", "eo gọn hơn khi kết hợp ăn uống lành mạnh", và chỉ theo đúng công dụng \
@@ -54,9 +54,7 @@ Câu mẫu đúng giọng của shop:
 
 Chỉ trả về JSON hợp lệ, không có chữ nào khác."""
 
-USER_TEMPLATE = """Hôm nay là {today} (mùa ở Hà Nội: {season}). Đừng nhắc sai mùa.
-
-Sản phẩm (dữ liệu từ {store}):
+USER_TEMPLATE = """Sản phẩm (dữ liệu từ {store}):
 {product}
 
 Review của người mua ở Đức (tiếng Đức):
@@ -65,7 +63,7 @@ Review của người mua ở Đức (tiếng Đức):
 Trả về JSON đúng cấu trúc sau:
 {{
   "review_summary": "2–3 câu tiếng Việt tóm tắt review: khen gì, chê gì",
-  "fit_for_vietnam": "1–2 câu: hợp với khách Việt nào, vì sao (khí hậu, thói quen)",
+  "fit_for_vietnam": "1–2 câu: hợp với khách Việt nào, vì sao (nhu cầu, thói quen)",
   "labels": {{
     "kind": "skincare | body | hair | fragrance | oral | supplement | other",
     "title": "tên sản phẩm bằng tiếng Việt như người Việt hay gọi: loại sản phẩm + hãng + dòng, tối đa 34 ký tự (vd 'Kem dưỡng ẩm NIVEA Soft', 'Dầu dưỡng tóc Elvital Öl Magique'); giữ tên hãng/dòng gốc, dịch phần loại sản phẩm",
@@ -92,12 +90,6 @@ Kiểu: "Ơ sao giờ mình mới biết đến em này 😭", "Mọi người b
 biết nhỉ", "Con này đỉnh thật sự luôn á 😮‍💨".
 - "product highlights": nói thẳng 2–3 điểm mạnh nhất của sản phẩm, 2–4 câu.
 Các caption (trừ one-liner) tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
-
-HANOI_SEASON = {
-    1: "đông, lạnh khô", 2: "cuối đông, nồm ẩm", 3: "xuân, nồm ẩm", 4: "xuân, ấm dần", 5: "đầu hè, nóng",
-    6: "hè, nắng nóng", 7: "hè, nắng nóng, mưa rào", 8: "hè, mưa nhiều", 9: "đầu thu", 10: "thu, hanh khô",
-    11: "cuối thu, hanh khô, se lạnh", 12: "đông, lạnh khô",
-}
 
 NO_REVIEWS_NOTE = (
     "\nKHÔNG có review nào được cung cấp. review_summary phải ghi đúng: \"Chưa có review chi tiết, "
@@ -157,10 +149,7 @@ def build_messages(product: dict, detail: dict, reviews: list[dict],
         extra += NO_REVIEWS_NOTE.replace("{rating}", f"{product['rating']:.1f}/5 ({product['review_count']} lượt đánh giá)")
     if not (detail.get("description") or detail.get("claims") or detail.get("features")):
         extra += NO_DETAILS_NOTE
-    today = dt.date.today()
     user = USER_TEMPLATE.format(
-        today=today.strftime("%d/%m/%Y"),
-        season=HANOI_SEASON[today.month],
         store=product["store"],
         product=json.dumps(info, ensure_ascii=False, indent=1),
         reviews="\n".join(review_lines) or "(không có review)",
@@ -183,6 +172,9 @@ SALES_WORDS = re.compile(
     r"\border\b|pre-?order|đặt\s*hàng|đặt\s*trước|hàng\s*về|về\s*hàng|\bcọc\b|inbox|\bib\b|nhắn\s*(cho\s*)?sốp|"
     r"\bship\b|gom\s*hàng|chốt\s*đơn|giữ\s*slot|còn\s*hàng|số\s*lượng\s*có\s*hạn|3\s*[-–]\s*4\s*tuần", re.I)
 ONE_LINER_MAX = 120
+# Weather, seasons and city names: customers live all over Vietnam and posts go out any time of year.
+WEATHER = re.compile(r"thời\s*tiết|hanh\s*khô|se\s*lạnh|nồm|trời\s*(nóng|lạnh|nắng|mưa|rét|hanh|oi)|"
+                     r"mùa\s*(đông|hè|thu|xuân|lạnh|nóng|khô|mưa|hanh)|hà\s*nội|sài\s*gòn|tp\.?\s*hcm|đà\s*nẵng", re.I)
 
 # Words Threads/Instagram punish: weight-loss products must be described indirectly.
 SENSITIVE = re.compile(r"giảm\s*cân|giảm\s*mỡ|đốt\s*(cháy\s*)?mỡ|tan\s*mỡ|giảm\s*béo|weight\s*loss", re.I)
@@ -208,6 +200,9 @@ def validate(draft: dict) -> list[str]:
         if sales:
             problems.append(f"caption {i} uses the selling word '{sales.group(0)}'; captions only talk about "
                             "the product (purchase info goes in the comment)")
+        weather = WEATHER.search(text)
+        if weather:
+            problems.append(f"caption {i} mentions '{weather.group(0)}'; no weather, seasons or city names")
         if c.get("style") == "one-liner" and (len(text) > ONE_LINER_MAX or len(re.findall(r"[.!?…]+\s+\S", text)) > 0):
             problems.append(f"caption {i} (one-liner) must be ONE short sentence")
         if "{PRICE}" in text or re.search(r"\d+[.,]?\d*\s*(€|🐠|(eur|đ|vnđ|vnd|k|nghìn|ngàn)\b)", text, re.I):
