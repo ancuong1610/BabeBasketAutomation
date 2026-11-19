@@ -117,22 +117,24 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
     variants: set[str] = set()           # one shade/scent per product per day
 
     def with_partner(item: dict) -> tuple[dict | None, str]:
-        """Shampoo and conditioner go out as a matching pair when one exists (owner's preference);
-        with no usable twin the product is sold on its own."""
+        """Shampoo and conditioner go out as a matching pair. Only a product that has NO twin of its
+        line is sold on its own; if the twin exists but cannot go out today, neither does this one."""
         if catalog.hair_kind(item) not in ("shampoo", "conditioner"):
             return item, ""
         partner = catalog.find_partner(item, all_rows)
         if partner is None:
             return item, ""
         key = (partner["store"], partner["product_id"])
-        if key in skip or key in used:
-            return item, ""
+        if key in skip:
+            return None, f"its twin {partner['name'][:40]} was drafted recently"
+        if key in used:
+            return None, "its twin is already in today's list"
         try:
-            ok, _ = check(partner)
-        except Exception:
-            ok = False
+            ok, reason = check(partner)
+        except Exception as err:
+            ok, reason = False, str(err)
         if not ok:
-            return item, ""
+            return None, f"its twin cannot be shipped: {reason}"
         shampoo, conditioner = (item, partner) if catalog.hair_kind(item) == "shampoo" else (partner, item)
         post = dict(shampoo, score=item["score"], group=item["group"])
         post["pair"] = {k: conditioner.get(k) for k in (

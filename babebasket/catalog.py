@@ -23,7 +23,8 @@ EXCLUDE = re.compile(
     r"schwamm|sponge|massage|föhn|glätteisen|lockenstab|rasierer|epilierer|elektrisch|feile|raspel|hobel|"
     r"nagellack|zahnpasta|zahnbürste|socken|handschuh|waschhandschuh|pinsel|wattepad|einlegesohle|"
     r"selbstbräuner|bräunungs|brow|augenbraue|muskeln|gelenke|"
-    r"chips|schoko|praline|bonbon|lebkuchen|kaffee|fruchtgummi|kerze|\bled\b|lichterkette|deko",
+    r"chips|schoko|praline|bonbon|lebkuchen|kaffee|fruchtgummi|kerze|\bled\b|lichterkette|deko|"
+    r"\bkinder|kinder(dusch|shampoo|pflege|zahn|sonnen)|\bbaby|babypflege|kleinkind",
     re.I,
 )
 PERFUME = re.compile(r"parfum|perfume|eau de |body ?mist|duftspray", re.I)
@@ -73,11 +74,14 @@ def is_gift_set(product: dict) -> bool:
 
 
 # --- flammability ------------------------------------------------------------------------
-# Not shippable = BOTH a fire warning AND a pressurised spray can (owner's rule, 2026-11-18).
-# A spray without the warning, or a non-spray with one, ships normally.
+# Not shippable (owner, 2026-11-19: "cứ xịt ga là bỏ"): every gas spray can, whether or not the
+# page shows a fire warning; dm often omits it (Dove deodorant sprays). A gas can is recognised by
+# propellants in the ingredients, by an aerosol/pressure warning, or by a fire warning on a product
+# named spray/foam. Pump sprays have no propellant and still ship.
 FIRE_WARNING = re.compile(r"entzündbar|entzündlich|flammable|\bH22[0-9]\b", re.I)
-SPRAY_CAN_WARNING = re.compile(r"aerosol|unter druck|druckbehälter", re.I)
+SPRAY_CAN_WARNING = re.compile(r"aerosol|unter druck|druckbehälter|druckgas", re.I)
 SPRAY_CAN_NAME = re.compile(r"spray|aerosol|schaum|mousse|trockenshampoo", re.I)
+PROPELLANT = re.compile(r"\b(iso)?butane?\b|\bpropane?\b|dimethyl ?ether|hydrofluorocarbon|\bHFC[- ]?152a\b", re.I)
 ROSSMANN_SPRAY = re.compile(r"spray|aerosol|haarschaum|schaumfestiger|rasierschaum", re.I)
 
 
@@ -96,13 +100,17 @@ def warning_text(dm_detail_raw: dict) -> str:
 
 
 def flammable_reason(dm_detail_raw: dict, name: str = "") -> str:
-    """Why a dm product cannot be shipped (fire warning AND spray can), or '' if it can."""
+    """Why a dm product cannot be shipped (it is a gas spray can), or '' if it can."""
+    gas = PROPELLANT.search(_section_text(dm_detail_raw, r"inhaltsstoffe|ingredients"))
+    if gas:
+        return f"gas spray can (propellant {gas.group(0)} in the ingredients)"
     warnings = warning_text(dm_detail_raw)
+    can = SPRAY_CAN_WARNING.search(warnings)
+    if can:
+        return f"gas spray can ({can.group(0)} in the warnings)"
     fire = FIRE_WARNING.search(warnings)
-    if not fire:
-        return ""
-    can = SPRAY_CAN_WARNING.search(warnings) or SPRAY_CAN_NAME.search(name)
-    return f"spray can with fire warning ({fire.group(0)}, {can.group(0)})" if can else ""
+    named = SPRAY_CAN_NAME.search(name)
+    return f"spray can with fire warning ({fire.group(0)}, {named.group(0)})" if fire and named else ""
 
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS product_checks (

@@ -221,14 +221,20 @@ class ShortlistTest(unittest.TestCase):
         db.add_draft(self.conn, "dm", "s1", {"product": {"pair": {"store": "dm", "product_id": "c1"}}})
         self.assertEqual(self.pick(SHOP), [])
 
-    def test_unsafe_partner_means_shampoo_alone(self):
+    def test_unsafe_twin_means_neither_goes_out(self):
         db.upsert_products(self.conn, [
             item("s1", "N", "Shampoo Power Repair, 250 ml", SHAMPOO, 4.8, 900),
             item("c1", "N", "Conditioner Power Repair, 200 ml", "Conditioner", 4.7, 400),
         ])
-        picks = shortlist.pick(self.conn, SHOP, check=lambda p: (p["product_id"] != "c1", "fire"))
-        self.assertEqual([p["product_id"] for p in picks], ["s1"])
-        self.assertNotIn("pair", picks[0])
+        self.assertEqual(self.pick(SHOP, check=lambda p: (p["product_id"] != "c1", "fire")), [])
+
+    def test_conditioner_whose_shampoo_was_drafted_is_not_sold_alone(self):
+        db.upsert_products(self.conn, [
+            item("s1", "L'ORÉAL", "Shampoo Glycolic Gloss, 200 ml", SHAMPOO, 4.6, 900),
+            item("c1", "L'ORÉAL", "Conditioner Glycolic Gloss, 150 ml", "Conditioner", 4.7, 800),
+        ])
+        db.add_draft(self.conn, "dm", "s1", {"product": {}})      # shampoo drafted alone earlier
+        self.assertEqual(self.pick(SHOP), [])
 
 
 GOOD_DRAFT = {
@@ -357,6 +363,10 @@ class LlmOutputTest(unittest.TestCase):
             {"style": "one-liner", "text": "Ơ sao giờ mình mới biết. Em này cấp ẩm cực tốt luôn á các bà ơi."}]}
         self.assertTrue(any("one-liner" in p for p in llm.validate(long)))
         self.assertEqual(llm.validate(GOOD_DRAFT), [])
+
+    def test_shampoo_labels_skip_usage(self):
+        user = llm.build_messages(product("1"), {}, [])[1]["content"]
+        self.assertIn("dầu gội / dầu xả / bộ gội + xả: KHÔNG ghi cách dùng", user)
 
     def test_prompt_asks_for_the_four_rotating_styles_without_sales_talk(self):
         msgs = llm.build_messages(product("1"), {}, [])

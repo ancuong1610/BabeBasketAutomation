@@ -79,7 +79,9 @@ Trả về JSON đúng cấu trúc sau:
 }}
 Chữ trên ảnh (labels): lấy từ official_claims, description, features, usage ở trên; không bịa. points theo kind:
 - skincare, body, oral: công dụng + thành phần chính (vd 'Cấp ẩm sâu tới 72 giờ', 'Vitamin E & dầu jojoba'); không ghi cách dùng.
-- hair: cách dùng ngắn theo bước + kết quả (vd 'Thoa lên tóc ẩm, không xả lại').
+- hair, dầu gội / dầu xả / bộ gội + xả: KHÔNG ghi cách dùng (ai cũng biết gội, xả thế nào). Ghi dành cho loại \
+tóc nào, nhu cầu nào, dùng xong tóc thế nào (vd 'Cho tóc nhuộm, khô xơ', 'Tóc bóng mượt, bớt xù', 'Không sulfat, êm da đầu').
+- hair, ủ tóc / xịt dưỡng / dầu dưỡng / serum: cách dùng ngắn + kết quả (vd 'Thoa lên tóc ẩm, không xả lại').
 - fragrance (nước hoa, body mist): mô tả mùi: hương đầu / hương giữa / hương cuối nếu có, hoặc cảm giác mùi.
 - supplement: công dụng nhà sản xuất công bố + liều dùng (vd '1 viên mỗi ngày').
 Bốn caption phải thật sự khác nhau (sốp đăng xoay vòng cả bốn kiểu):

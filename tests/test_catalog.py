@@ -45,6 +45,8 @@ class ClassifyTest(unittest.TestCase):
                            ("Stylinggel Kleber 4 Brows & Edges", "Haargel"),
                            ("Einlegesohlen", "Einlegesohlen")]:
             self.assertIsNone(cls(name, cats), name)
+        for name, cats in [("Kinder Duschgel Erdbeere", "Kinderduschgel"), ("Baby Shampoo sensitiv", "Babypflege")]:
+            self.assertIsNone(cls(name, cats), name)
 
     def test_sprays_are_left_to_the_warning_check(self):
         self.assertEqual(cls("Trockenshampoo", "Haarstyling"), "hair")
@@ -122,8 +124,15 @@ class SafetyTest(unittest.TestCase):
         self.assertEqual(check({"store": "dm", "product_id": "1"})[0], False)
         self.assertEqual(check({"store": "dm", "product_id": "2"}), (True, ""))
 
-    def test_spray_without_fire_warning_ships(self):
-        self.assertEqual(self.checker({"3": AEROSOL_NO_WARNING})({"store": "dm", "product_id": "3", "name": "Deospray"}),
+    def test_gas_spray_without_fire_warning_is_blocked(self):
+        ok, reason = self.checker({"3": AEROSOL_NO_WARNING})({"store": "dm", "product_id": "3", "name": "Deospray"})
+        self.assertFalse(ok)
+        self.assertIn("propellant", reason)
+
+    def test_pump_spray_and_propanediol_ship(self):
+        pump = {"descriptionGroups": [{"header": "Inhaltsstoffe", "contentBlock": [
+            {"texts": ["Aqua, Propanediol, Butylene Glycol, Glycerin, Parfum"]}]}]}
+        self.assertEqual(self.checker({"6": pump})({"store": "dm", "product_id": "6", "name": "Leave-In Spray"}),
                          (True, ""))
 
     def test_fire_warning_on_a_non_spray_ships(self):
