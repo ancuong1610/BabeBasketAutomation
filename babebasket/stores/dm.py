@@ -170,6 +170,6 @@ def fetch_reviews(product_id: str, limit: int = 15, fetch: Callable[[str], dict]
 def write_csv(rows, out) -> None:
     import csv
 
-    writer = csv.DictWriter(out, fieldnames=FIELDS)
+    writer = csv.DictWriter(out, fieldnames=FIELDS, extrasaction="ignore")  # store-only extras (offers etc.) stay out of the CSV
     writer.writeheader()
     writer.writerows(rows)
