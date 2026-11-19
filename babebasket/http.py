@@ -43,9 +43,9 @@ def request_json(
             if retryable and attempt < retries:
                 wait = backoff
                 retry_after = err.headers.get("Retry-After")
-                if retry_after:
+                if retry_after:  # the server says exactly how long (Discord: usually under a second)
                     try:
-                        wait = max(wait, float(retry_after))
+                        wait = max(1.0, float(retry_after))
                     except ValueError:
                         pass
                 print(f"{err.code} from {url.split('?')[0]}, retrying in {wait:.0f}s", file=sys.stderr)

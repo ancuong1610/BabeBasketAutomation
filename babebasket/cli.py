@@ -235,6 +235,7 @@ def cmd_check(cfg: dict, conn) -> None:
     for row in db.drafts(conn, "pending"):
         payload = json.loads(row["payload"])
         n = len(payload["draft"].get("captions", []))
+        time.sleep(0.5)  # several waiting cards are read one after another: stay under Discord's rate limit
         decision = discord.read_decision(channel, row["discord_message_id"], n, owners)
         if not decision:
             continue

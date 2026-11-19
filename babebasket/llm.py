@@ -27,6 +27,7 @@ Giọng văn caption (tiếng Việt):
 - KHÔNG nhắc thời tiết, mùa (hanh khô, se lạnh, nồm, trời nóng…) hay tên thành phố (Hà Nội, Sài Gòn…): khách ở \
   khắp Việt Nam và bài đăng vào nhiều thời điểm, nhắc thời tiết dễ sai và nghe dập khuôn.
 - Dùng "nhé", "nhá", "nha", "nè" vừa phải, không câu nào cũng có.
+- Mọi caption kết thúc bằng một emoji dễ thương (🥰, 💖, 🫶, ✨, 😍, 🤍…), KHÔNG kết thúc bằng dấu chấm.
 - Gọi người đọc là "các babe" hoặc "các bà"; shop tự xưng "sốp" hoặc "tui".
 - TUYỆT ĐỐI không dùng chữ "tiền"; nếu cần thì dùng "xèng".
 - KHÔNG ghi giá trong caption: không con số giá, không "🐠", không "k", không đơn vị tiền.
@@ -186,6 +187,18 @@ WEATHER = re.compile(r"thời\s*tiết|hanh\s*khô|se\s*lạnh|nồm|trời\s*(n
 SENSITIVE = re.compile(r"giảm\s*cân|giảm\s*mỡ|đốt\s*(cháy\s*)?mỡ|tan\s*mỡ|giảm\s*béo|weight\s*loss", re.I)
 
 
+END_EMOJIS = ["🥰", "💖", "🫶", "✨", "😍", "🤍"]
+
+
+def soften_endings(draft: dict) -> dict:
+    """Captions end with a cute emoji, never with a full stop (a final '.' reads stiff on Threads)."""
+    for i, c in enumerate(draft.get("captions") or []):
+        text = (c.get("text") or "").rstrip()
+        if text.endswith(".") and not text.endswith(".."):
+            c["text"] = text[:-1].rstrip() + " " + END_EMOJIS[i % len(END_EMOJIS)]
+    return draft
+
+
 def validate(draft: dict) -> list[str]:
     """Problems that must be fixed before the draft is usable."""
     problems = []
@@ -289,6 +302,7 @@ def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, atte
             continue
         last_problems = validate(draft)
         if not last_problems:
+            soften_endings(draft)
             draft["_model"] = reply.get("model", llm["model"])
             draft["_usage"] = reply.get("usage", {})
             return draft

@@ -364,6 +364,16 @@ class LlmOutputTest(unittest.TestCase):
         self.assertTrue(any("one-liner" in p for p in llm.validate(long)))
         self.assertEqual(llm.validate(GOOD_DRAFT), [])
 
+    def test_captions_end_with_an_emoji_not_a_full_stop(self):
+        draft = {"captions": [{"text": "Tóc mềm mượt hẳn."}, {"text": "Thơm lắm nha 🥰"}, {"text": "Đợi đã..."},
+                              {"text": "Dùng là mê.  "}]}
+        texts = [c["text"] for c in llm.soften_endings(draft)["captions"]]
+        self.assertEqual(texts[0], "Tóc mềm mượt hẳn 🥰")
+        self.assertEqual(texts[1], "Thơm lắm nha 🥰")       # already ends with an emoji
+        self.assertEqual(texts[2], "Đợi đã...")              # an ellipsis is fine
+        self.assertEqual(texts[3], "Dùng là mê ✨")
+        self.assertIn("KHÔNG kết thúc bằng dấu chấm", llm.build_messages(product("1"), {}, [])[0]["content"])
+
     def test_shampoo_labels_skip_usage(self):
         user = llm.build_messages(product("1"), {}, [])[1]["content"]
         self.assertIn("dầu gội / dầu xả / bộ gội + xả: KHÔNG ghi cách dùng", user)
