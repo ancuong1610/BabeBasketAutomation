@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.." || exit 1
 . scripts/find_python.sh
 [ -n "$PY" ] || { echo "Python 3.11+ not found (set BABEBASKET_PYTHON)" >&2; exit 1; }
 
+export PYTHONUNBUFFERED=1   # write progress lines to the log as they happen
 mkdir -p data/logs
 LOG="data/logs/$(date +%Y-%m-%d)-$1.log"
 {
