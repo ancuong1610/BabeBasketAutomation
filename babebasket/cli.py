@@ -102,7 +102,7 @@ def fetch_bytes(url: str) -> bytes:
 
 
 def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None, ai: bool = True,
-                feedback: str = "", previous: bytes | None = None) -> str | None:
+                feedback: str = "", previous: bytes | None = None, describe=None, check=None) -> str | None:
     """Render the post image for a draft payload. Returns the file path, or None if there is no packshot.
 
     With ai=True: Gemini scene first; if it fails or returns something that is not an image,
@@ -117,7 +117,8 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
 
     from babebasket import postimage, scene
 
-    gen = gen or scene.generate
+    if gen is None:  # the real image model: also read the packaging first and check the result after
+        gen, describe, check = scene.generate, describe or scene.describe_packaging, check or scene.check_fidelity
     product = payload["product"]
     if not product.get("image_url"):
         return None
@@ -131,13 +132,20 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         return None
     labels = llm.image_labels(payload["draft"])
     source, base = "fallback", None
-    extra = {k: v for k, v in (("feedback", feedback), ("previous", previous)) if v}
+    facts = ""
+    if ai and describe:  # e.g. "opaque iridescent pink bottle": stops the model inventing clear plastic
+        facts = payload.get("packaging_facts") or describe(packshot, cfg)
+        payload["packaging_facts"] = facts
+    extra = {k: v for k, v in (("feedback", feedback), ("previous", previous), ("facts", facts)) if v}
     generated = gen(packshot, product, cfg, **extra) if ai else None
+    payload.pop("fidelity", None)
     if generated:
         try:
             base = Image.open(io.BytesIO(generated))
             base.load()
             source = "gemini"
+            if check:
+                payload["fidelity"] = check(packshot, generated, cfg, facts=facts)
         except (UnidentifiedImageError, OSError) as err:
             print(f"! scene was not an image for {product['product_id']}: {err}", file=sys.stderr)
             base = None
@@ -271,6 +279,10 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         db.log_image_call(conn, draft_id, ok)
         if not ok:
             notes.append("The AI image failed, so this is the plain background.")
+    fidelity = payload.get("fidelity") or {}
+    if fidelity.get("match") is False:
+        notes.append("⚠️ Có thể khác bao bì thật: " + "; ".join(fidelity.get("problems", []))
+                     + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),

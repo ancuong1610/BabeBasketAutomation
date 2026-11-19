@@ -81,6 +81,13 @@ Made only after the caption is approved (step 2 above), as one finished image (1
 1. `scene.py` sends the dm/Rossmann packshot to a Gemini image model on OpenRouter
    (`[image] model` in `config.toml`), which returns a photo of a hand holding the product
    in a drugstore aisle. Any failure → `postimage.fallback_scene` (packshot on a cream background).
+   Before that, the text model reads the packshot and writes down the packaging facts
+   (container, opaque or transparent, colours and finish, cap/pump), which go into the image
+   prompt as hard rules: iridescent bottles were coming out as clear plastic without them.
+   The hand is a small young Asian woman's hand, and the product's amount from its name
+   ("1.000 ml") sets its true size in the hand. After the image is made, the text model
+   compares it with the packshot; if a customer would notice a difference, the image card
+   says what differs ("⚠️ Có thể khác bao bì thật: …") so the owner can ✏️ or ❌.
 2. `postimage.py` draws the text the LLM wrote in `labels` (title, hero, who_for, 2–3 points;
    `mode` = `usage` for hair/styling, `benefits` otherwise) as red boxes in Be Vietnam Pro,
    plus the logo from `assets/logo.jpg` (replace it with a larger file when available).

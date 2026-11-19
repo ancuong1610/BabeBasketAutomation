@@ -102,6 +102,77 @@ FEEDBACK_NOTE = "\n\nThe shop owner also asks (the hard rules above still win): 
 MAX_FEEDBACK_CHARS = 500
 
 
+DESCRIBE_PROMPT = """You see the official photo of a drugstore product (or two products side by side).
+An image model must reproduce the packaging EXACTLY in a new photo. Describe what it must get right.
+Be concrete about whether the container is opaque or see-through: iridescent, pearlescent or metallic
+finishes are usually OPAQUE coatings, not clear plastic.
+Return only JSON:
+{"products": [{"container": "e.g. pump bottle / squeeze tube / flip-cap bottle / jar",
+               "opacity": "opaque or transparent, and what that looks like",
+               "body_colour_and_finish": "...", "cap_or_pump": "colour, material, shape",
+               "label": "main colours and layout of the front label", "other": "anything distinctive"}]}"""
+
+PACKAGING_NOTE = ("\n\nPackaging facts read from the real product photo. Reproduce them exactly; they "
+                  "override any idea of what such a product usually looks like:\n{facts}")
+
+CHECK_PROMPT = """The FIRST image is the official photo of the real product(s). The SECOND is an AI-made photo
+that must show the same product(s). Compare only the packaging: container shape, opaque vs transparent,
+body colour and finish, cap/pump colour and shape, label layout, brand and product name.
+Ignore background, hand, lighting, angle and size. Small blur is fine. Tiny small-print typos are
+not worth flagging; wrong brand/product names are.{facts}
+Return only JSON: {"match": true or false, "problems": ["short problem in Vietnamese", ...]}
+"match" is false only for differences a customer would notice when the real product arrives."""
+
+
+def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[..., dict], api_key: str | None) -> dict:
+    """Ask the text model (it reads images) a question about images; returns parsed JSON."""
+    from babebasket.llm import parse_json_reply
+
+    content = [{"type": "text", "text": prompt}] + [
+        {"type": "image_url", "image_url": {"url": f"data:{_mime(img)};base64," + base64.b64encode(img).decode()}}
+        for img in images]
+    reply = post(OPENROUTER_URL, method="POST", timeout=90, retries=1,
+                 headers={"Authorization": f"Bearer {api_key or secret('OPENROUTER_API_KEY')}", "X-Title": "babe basket"},
+                 body={"model": cfg.get("llm", {}).get("model", "google/gemini-3.8-flash"), "temperature": 0,
+                       "response_format": {"type": "json_object"},
+                       "messages": [{"role": "user", "content": content}]})
+    return parse_json_reply(reply["choices"][0]["message"]["content"])
+
+
+def describe_packaging(packshot: bytes, cfg: dict, post: Callable[..., dict] = request_json,
+                       api_key: str | None = None) -> str:
+    """Concrete packaging facts for the image prompt, e.g. 'opaque iridescent pink bottle'. '' on failure."""
+    try:
+        data = _vision_json(DESCRIBE_PROMPT, [packshot], cfg, post, api_key)
+    except Exception as err:
+        print(f"scene: packaging description failed: {err}", file=sys.stderr)
+        return ""
+    lines = []
+    for i, prod in enumerate(data.get("products") or [], 1):
+        if isinstance(prod, dict):
+            facts = "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in prod.items() if v)
+            lines.append(f"- product {i}: {facts}")
+    return "\n".join(lines)[:1500]
+
+
+def check_fidelity(packshot: bytes, generated: bytes, cfg: dict, post: Callable[..., dict] = request_json,
+                   api_key: str | None = None, facts: str = "") -> dict:
+    """{'match': bool, 'problems': [...]} comparing the AI photo with the real packaging.
+    If the check itself fails, returns match True with no problems (the owner still reviews the image)."""
+    try:
+        known = f"\nFacts about the real packaging (trust these over your reading of the first image):\n{facts}" if facts else ""
+        data = _vision_json(CHECK_PROMPT.replace("{facts}", known), [packshot, generated], cfg, post, api_key)
+    except Exception as err:
+        print(f"scene: fidelity check failed: {err}", file=sys.stderr)
+        return {"match": True, "problems": [], "checked": False}
+    problems = [str(p) for p in (data.get("problems") or []) if p][:4]
+    match = data.get("match") is not False
+    if not match and not problems:
+        problems = ["ảnh AI khác bao bì thật"]
+    return {"match": match,
+            "problems": problems, "checked": True}
+
+
 def _mime(data: bytes) -> str:
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
@@ -127,6 +198,7 @@ def generate(
     api_key: str | None = None,
     feedback: str = "",
     previous: bytes | None = None,
+    facts: str = "",
 ) -> bytes | None:
     image_cfg = cfg.get("image", {})
     if not image_cfg.get("enabled", True):
@@ -142,13 +214,15 @@ def generate(
         product_name += f" + {pair.get('name', '')}"
     if feedback and previous:
         content = [
-            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback)},
+            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback)
+             + (PACKAGING_NOTE.format(facts=facts) if facts else "")},
             {"type": "image_url", "image_url": {"url": data_url(previous)}},
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
     else:
         size = "" if pair else size_hint(product.get("name", ""))
         text = PROMPT.format(product=product_name, size=size) + (PAIR_SCENE_NOTE if pair else "") \
+            + (PACKAGING_NOTE.format(facts=facts) if facts else "") \
             + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
         content = [
             {"type": "text", "text": text},
