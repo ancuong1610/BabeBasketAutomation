@@ -177,6 +177,23 @@ def _defined(value):
     return None if value == "$undefined" else value
 
 
+def _offer(o: dict) -> dict:
+    """Discount shown on a tile: '20% Sparen' badge or a struck-through old price; 'Aus der Werbung' = weekly flyer."""
+    price = o.get("price") or {}
+    texts = [d.get("text", "") for d in o.get("disruptors") or [] if isinstance(d, dict)]
+    pct = 0.0
+    for t in texts:
+        m = re.search(r"(\d+)\s*%\s*Sparen", t, re.I)
+        if m:
+            pct = max(pct, float(m.group(1)))
+    old = _num(((price.get("strikethrough") or {}) if isinstance(price.get("strikethrough"), dict) else {}).get("amount"))
+    now = _num((price.get("retail") or {}).get("amount"))
+    if not pct and old and now and old > now:
+        pct = round((1 - now / old) * 100)
+    label = " · ".join(t for t in texts if re.search(r"sparen|werbung", t, re.I))
+    return {"offer_pct": pct, "offer_label": label, "is_new_flag": any(t.strip().lower() == "neu" for t in texts)}
+
+
 def _row_from_tile(o: dict, scraped_at: str) -> dict:
     price = o.get("price") or {}
     rating = _defined(o.get("rating")) or {}
@@ -199,6 +216,7 @@ def _row_from_tile(o: dict, scraped_at: str) -> dict:
         "image_url": image.get("url", "") if isinstance(image, dict) else "",
         "product_url": urllib.parse.urljoin(SITE, o.get("productUrl", "")),
         "scraped_at": scraped_at,
+        **_offer(o),
     }
 
 

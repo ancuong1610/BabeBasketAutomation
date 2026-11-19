@@ -22,7 +22,8 @@ EXCLUDE = re.compile(
     r"bürste|kamm\b|haargummi|haarband|haarreif|haarklammer|spange|"
     r"schwamm|sponge|massage|föhn|glätteisen|lockenstab|rasierer|epilierer|elektrisch|feile|raspel|hobel|"
     r"nagellack|zahnpasta|zahnbürste|socken|handschuh|waschhandschuh|pinsel|wattepad|einlegesohle|"
-    r"selbstbräuner|bräunungs|brow|augenbraue|muskeln|gelenke",
+    r"selbstbräuner|bräunungs|brow|augenbraue|muskeln|gelenke|"
+    r"chips|schoko|praline|bonbon|lebkuchen|kaffee|fruchtgummi|kerze|\bled\b|lichterkette|deko",
     re.I,
 )
 PERFUME = re.compile(r"parfum|perfume|eau de |body ?mist|duftspray", re.I)
@@ -51,6 +52,8 @@ def classify(product: dict) -> tuple[str | None, str]:
     text = f"{product.get('name', '')} | {product.get('categories', '')}"
     if EXCLUDE.search(text):
         return None, f"excluded type ({EXCLUDE.search(text).group(0)})"
+    if re.search(r"adventskalender", text, re.I) and re.search(r",\s*[\d.,]+\s*g\b", product.get("name", "")):
+        return None, "food advent calendar (sold by weight)"
     if PERFUME.search(text):
         brand = (product.get("brand") or "").lower().replace(" ", "")
         if "jean" in brand and re.search(r"haarparfum|hair ?perfume", text, re.I):

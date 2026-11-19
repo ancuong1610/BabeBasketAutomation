@@ -150,8 +150,12 @@ App coupons sit behind the owner's login, so they are never scraped. Instead:
   ranking but lower the cost. The caption card shows "🎟️ Coupon … · đến 30.11" and the cost
   after the coupon. Expired coupons stop counting by themselves.
 
-Rossmann's weekly flyer is public; its parser is waiting for real pages from the owner's Mac:
-`python3 -m babebasket.stores.rossmann probe-offers`, then commit `rossmann_probe/offers/`.
+Rossmann's public offers pages (`[rossmann] offer_pages`: Angebote and Neu im Sortiment) are read
+on every run that includes Rossmann. Each discounted product ("20% Sparen", struck-through old
+price, "Aus der Werbung" = weekly flyer) becomes a 7-day boost, replaced by the next run. The
+scraped price already includes the discount, so it is not subtracted again. "Neu" products
+feed the daily new-product pick like any unrated product. To look for more offers pages:
+`python3 -m babebasket.stores.rossmann probe-offers`.
 
 ## Settings
 

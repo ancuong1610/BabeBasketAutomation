@@ -706,9 +706,10 @@ class PostResilienceTest(unittest.TestCase):
             return r
 
         with mock.patch.object(discord, "post_card", side_effect=post_card), mock.patch.object(cli.time, "sleep"):
-            cli.cmd_post({"discord": {"channel_id": "c"}}, conn)
+            with self.assertRaises(RuntimeError):   # the run reports the failed card at the end ...
+                cli.cmd_post({"discord": {"channel_id": "c"}}, conn)
         row = conn.execute("SELECT status FROM drafts WHERE id = ?", (second,)).fetchone()
-        self.assertEqual(row["status"], "pending")
+        self.assertEqual(row["status"], "pending")   # ... after still sending the others
 
     def test_multipart_retries_429(self):
         import io

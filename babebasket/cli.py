@@ -42,6 +42,19 @@ def cmd_scrape(cfg: dict, conn, stores: tuple[str, ...] = ("dm", "rossmann")) ->
             print(f"    ! no products: is '{category}' an exact dm category name?", file=sys.stderr)
         all_rows += rows
         time.sleep(dm.DELAY_SECONDS)
+    offer_rows = []
+    for url in cfg.get("rossmann", {}).get("offer_pages", []) if "rossmann" in stores else []:
+        try:  # weekly flyer / online offers: discounts become ranking boosts (coupons table)
+            found = rossmann.crawl_category(url)
+        except Exception as err:
+            print(f"rossmann offers {url}: failed: {err}", file=sys.stderr)
+            continue
+        print(f"rossmann offers {url}: {len(found)} products, {sum(1 for r in found if r.get('offer_pct'))} discounted")
+        offer_rows += found
+        all_rows += found
+    if offer_rows:
+        from babebasket import coupons
+        print(f"rossmann offers: {coupons.replace_store_offers(conn, offer_rows)} discounts saved")
     for url in cfg.get("rossmann", {}).get("categories", []) if "rossmann" in stores else []:
         try:
             rows = rossmann.crawl_category(url)
@@ -88,7 +101,8 @@ def make_draft(product: dict, cfg: dict) -> dict:
         pair_detail, pair_reviews = enrich(pair)
         reviews = reviews[:8] + pair_reviews[:6]
         price = round(price + (pair.get("price_eur") or 0), 2)
-    quote = pricing.quote(price, product["store"], cfg, (product.get("coupon") or {}).get("percent"))
+    coupon = product.get("coupon") or {}
+    quote = pricing.quote(price, product["store"], cfg, None if coupon.get("in_price") else coupon.get("percent"))
     draft = llm.draft_post(product, detail, reviews, cfg, pair=pair, pair_detail=pair_detail)
     warnings = llm.warnings(draft, had_reviews=bool(reviews))
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
@@ -182,6 +196,7 @@ def cmd_post(cfg: dict, conn) -> None:
     channel = cfg["discord"]["channel_id"]
     if not channel:
         raise SystemExit("Set discord.channel_id in config.toml or DISCORD_CHANNEL_ID in .env")
+    failed = []
     for row in db.drafts(conn, "drafted"):
         payload = json.loads(row["payload"])
         n = len(payload["draft"].get("captions", []))
@@ -202,10 +217,14 @@ def cmd_post(cfg: dict, conn) -> None:
                 message_id = discord.post_card(channel, card(False), n)
         except Exception as err:  # one bad card must not stop the rest of the day's drafts
             print(f"! card for draft #{row['id']} failed: {err}", file=sys.stderr)
+            failed.append(row["id"])
             continue
         db.set_status(conn, row["id"], "pending", discord_message_id=message_id)
         print(f"card for draft #{row['id']} -> message {message_id}")
         time.sleep(1)
+    if failed:  # make the run fail (n8n shows it red, run.sh alerts) instead of failing silently
+        raise RuntimeError(f"{len(failed)} card(s) not sent (drafts {', '.join(f'#{i}' for i in failed)}); "
+                           "they stay drafted: fix the cause (e.g. DISCORD_BOT_TOKEN in .env), then run: post")
 
 
 def cmd_check(cfg: dict, conn) -> None:

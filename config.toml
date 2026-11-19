@@ -28,6 +28,12 @@ dm = ["Sonnenpflege", "Gesichtspflege", "Hautbild", "Wohlbefinden & Stärkung", 
 categories = [
 "https://www.rossmann.de/de/alle-marken/isana/c/online-dachmarke_4455382",
 ]
+# Public offers pages (found with probe-offers): discounted products rank higher for 7 days,
+# "Neu" products feed the daily new-product pick. Cookies/food/detergent are filtered out as usual.
+offer_pages = [
+"https://www.rossmann.de/de/angebote/m/angebote",
+"https://www.rossmann.de/de/angebote/m/neu-im-sortiment",
+]
 
 
 [shortlist]

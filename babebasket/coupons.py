@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS coupons (
     source_message_id TEXT,
     reply_message_id TEXT,
     active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    product_ids TEXT NOT NULL DEFAULT '[]',   -- applies_to 'product_ids' (store offers)
+    in_price INTEGER NOT NULL DEFAULT 0,      -- 1: the discount is already in the shelf price (store offer)
+    source TEXT NOT NULL DEFAULT 'owner'      -- owner | rossmann-offers
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -65,6 +68,12 @@ Skip things that are not discounts (e.g. free samples without a discount). Never
 
 def ensure(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(coupons)")}
+    for col, decl in (("product_ids", "TEXT NOT NULL DEFAULT '[]'"), ("in_price", "INTEGER NOT NULL DEFAULT 0"),
+                      ("source", "TEXT NOT NULL DEFAULT 'owner'")):
+        if col not in have:   # databases made before store offers existed
+            conn.execute(f"ALTER TABLE coupons ADD COLUMN {col} {decl}")
+    conn.commit()
 
 
 def today() -> dt.date:
@@ -91,6 +100,8 @@ def matches(coupon: dict, product: dict) -> bool:
     kind = coupon.get("applies_to")
     if kind == "all":
         return True
+    if kind == "product_ids":
+        return str(product.get("product_id")) in {str(i) for i in coupon.get("product_ids") or []}
     haystack = f"{product.get('brand', '')} {product.get('name', '')} {product.get('categories', '')}"
     flat = _norm(haystack)
     brands = [b for b in coupon.get("brands") or [] if len(_norm(b)) >= 3]
@@ -114,6 +125,7 @@ def active(conn: sqlite3.Connection, on: dt.date | None = None) -> list[dict]:
     for r in rows:
         c = dict(r)
         c["brands"], c["keywords"] = json.loads(c["brands"]), json.loads(c["keywords"])
+        c["product_ids"] = json.loads(c.get("product_ids") or "[]")
         out.append(c)
     return out
 
@@ -127,7 +139,32 @@ def best_for(product: dict, coupons: list[dict]) -> dict | None:
 
 def summary(c: dict) -> dict:
     return {"id": c.get("id"), "label": c.get("label") or f"−{effective_pct(c):g}%",
-            "percent": effective_pct(c), "valid_until": c.get("valid_until"), "applies_to": c.get("applies_to")}
+            "percent": effective_pct(c), "valid_until": c.get("valid_until"), "applies_to": c.get("applies_to"),
+            "in_price": bool(c.get("in_price"))}
+
+
+OFFER_DAYS = 7
+
+
+def replace_store_offers(conn: sqlite3.Connection, rows: list[dict], store: str = "rossmann") -> int:
+    """Turn today's discounted products from the store's offers pages into coupons (replacing yesterday's).
+    The discount is already in the scraped price, so these only rank products higher."""
+    ensure(conn)
+    source = f"{store}-offers"
+    conn.execute("UPDATE coupons SET active = 0 WHERE source = ?", (source,))
+    until = (today() + dt.timedelta(days=OFFER_DAYS - 1)).isoformat()
+    n = 0
+    for r in rows:
+        if (r.get("offer_pct") or 0) <= 0:
+            continue
+        label = f"{store.capitalize()} −{r['offer_pct']:g}%" + (f" ({r['offer_label']})" if r.get("offer_label") else "")
+        conn.execute(
+            "INSERT INTO coupons (store, applies_to, brands, keywords, product_ids, percent, valid_until, label,"
+            " in_price, source, created_at) VALUES (?, 'product_ids', '[]', '[]', ?, ?, ?, ?, 1, ?, ?)",
+            (store, json.dumps([str(r["product_id"])]), r["offer_pct"], until, label, source, db.now()))
+        n += 1
+    conn.commit()
+    return n
 
 
 # --- reading the channel ----------------------------------------------------------------
