@@ -314,17 +314,67 @@ def probe(keyword: str, out_dir: Path) -> None:
     print("Commit the rossmann_probe/ folder (or send report.json + the two .html files) so the parser can be fitted.")
 
 
+OFFER_LINK = re.compile(r"angebot|prospekt|aktion|coupon|rabatt|sale", re.I)
+
+
+def probe_offers(out_dir: Path, max_pages: int = 5) -> None:
+    """Find Rossmann's public weekly offers / flyer pages and save samples, so a parser can be fitted.
+    Run on the owner's Mac (rossmann.de blocks Claude's crawlers)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report: dict = {"fetched_at": dt.datetime.now().isoformat(timespec="seconds")}
+    home = fetch_html(SITE + "/de/")
+    (out_dir / "home.html").write_text(home)
+    links = sorted({urllib.parse.urljoin(SITE, h) for h in re.findall(r'href="([^"]+)"', home)
+                    if OFFER_LINK.search(h)})
+    report["home_offer_links"] = links[:80]
+    report["pdf_links"] = sorted({urllib.parse.urljoin(SITE, h) for h in re.findall(r'href="([^"]+\.pdf)"', home)})
+    try:
+        sitemap_hits = []
+        for sm in _sitemap_locs(fetch_text(SITEMAP_INDEX)):
+            if OFFER_LINK.search(sm):
+                sitemap_hits.append(sm)
+        report["offer_sitemaps"] = sitemap_hits
+    except Exception as err:
+        report["sitemap_error"] = str(err)
+    pages = [u for u in links if allowed(u)][:max_pages]
+    report["saved_pages"] = []
+    for i, url in enumerate(pages, 1):
+        time.sleep(DELAY_SECONDS)
+        try:
+            page = fetch_html(url)
+        except Exception as err:
+            report["saved_pages"].append({"url": url, "error": str(err)})
+            continue
+        name = f"offers_{i}.html"
+        (out_dir / name).write_text(page)
+        report["saved_pages"].append({
+            "url": url, "file": name, "bytes": len(page),
+            "has_next_data": "self.__next_f" in page or "__NEXT_DATA__" in page,
+            "price_mentions": len(re.findall(r"\d+,\d{2}\s*€", page)),
+            "percent_mentions": len(re.findall(r"\d+\s*%", page)),
+        })
+        print(f"saved {name}: {url}")
+    _close_browser()
+    (out_dir / "offers_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
+    print(f"\nReport: {out_dir / 'offers_report.json'}")
+    print("Commit the folder (git add -f) and push, so the offers parser can be fitted to the real pages.")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Rossmann scraper tools")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("probe", help="inspect rossmann.de structure and save samples")
     p.add_argument("--keyword", default="haar")
     p.add_argument("--out", default=str(ROOT / "rossmann_probe"))
+    o = sub.add_parser("probe-offers", help="find the weekly offers/flyer pages and save samples")
+    o.add_argument("--out", default=str(ROOT / "rossmann_probe" / "offers"))
     c = sub.add_parser("crawl", help="scrape one category URL and print a summary")
     c.add_argument("url")
     args = ap.parse_args(argv)
     if args.cmd == "probe":
         probe(args.keyword, Path(args.out))
+    elif args.cmd == "probe-offers":
+        probe_offers(Path(args.out))
     else:
         rows = crawl_category(args.url)
         print(json.dumps(rows[:3], ensure_ascii=False, indent=1))

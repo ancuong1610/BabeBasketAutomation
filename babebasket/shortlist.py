@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from typing import Callable
 
-from babebasket import catalog, db
+from babebasket import catalog, coupons, db
 
 PRIOR_RATING = 4.0   # Bayesian prior: few reviews pull a rating toward this
 PRIOR_WEIGHT = 50
@@ -75,6 +75,16 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
     ranked: dict[str, list[dict]] = {g: [] for g in groups}
     all_rows = [dict(r) for r in conn.execute("SELECT * FROM products WHERE price_eur IS NOT NULL").fetchall()]
     trusted = brand_ratings(all_rows)
+    valid_coupons = coupons.active(conn)
+    coupon_weight = sc.get("coupon_weight", 2.0)
+
+    def with_coupon(item: dict) -> float:
+        """Attach the best valid coupon; product/brand coupons boost the score (20 % -> x1.4 at weight 2)."""
+        best = coupons.best_for(item, valid_coupons)
+        if not best:
+            return 1.0
+        item["coupon"] = coupons.summary(best)
+        return 1.0 if best["applies_to"] == "all" else 1.0 + coupon_weight * coupons.effective_pct(best) / 100
     fresh: list[dict] = []   # new products with no rating yet, from brands that rate well: the daily "gacha" pick
     for item in all_rows:
         if (item["store"], item["product_id"]) in skip:
@@ -84,7 +94,8 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
             brand_avg = trusted.get((item.get("brand") or "").strip().lower(), 0)
             cap = sc.get("max_price_gift_set_eur", 40) if catalog.is_gift_set(item) else sc.get("max_price_eur", 20)
             if group in ranked and brand_avg >= TRUSTED_BRAND_RATING and item["price_eur"] <= cap:
-                item.update(score=round(brand_avg, 4), group=group, is_new=True, brand_rating=round(brand_avg, 2))
+                item.update(score=round(brand_avg * with_coupon(item), 4), group=group, is_new=True,
+                            brand_rating=round(brand_avg, 2))
                 fresh.append(item)
             continue
         group, _ = eligible(item, cfg)
@@ -93,6 +104,7 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
         s = score(item["rating"], item["review_count"], item["brand"], sc.get("preferred_brands", []))
         if not catalog.is_gift_set(item) and item["price_eur"] > sc.get("sweet_spot_eur", 10):
             s *= 0.75  # most customers are students: dearer products rank lower
+        s *= with_coupon(item)
         item["score"], item["group"] = round(s, 4), group
         ranked[group].append(item)
     for items in ranked.values():

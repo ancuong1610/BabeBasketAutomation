@@ -136,6 +136,23 @@ Captions for figure/weight products never use "giảm cân", "giảm mỡ", "đ�
 "giảm béo" (Threads and Instagram cut their reach). They are written indirectly and stick
 to the maker's claims.
 
+## Coupons (#coupons)
+
+App coupons sit behind the owner's login, so they are never scraped. Instead:
+
+- Post a **screenshot** of the dm or Rossmann app's coupon tab in the Discord channel
+  **#coupons** (one screenshot can hold many coupons), or type a short note such as
+  `dm 20% Balea đến 30.11` or `Rossmann 10-fach Payback Haarpflege bis 24.11.`
+- On the next `check` (≤10 min) the text model reads it, saves each coupon with its end date
+  and replies with what it understood. ❌ on that reply deletes those coupons.
+- While a coupon is valid, products it covers rank higher (`[shortlist] coupon_weight`:
+  20 % → score ×1.4; PAYBACK "10-fach" counts as 5 %). Whole-purchase coupons don't change the
+  ranking but lower the cost. The caption card shows "🎟️ Coupon … · đến 30.11" and the cost
+  after the coupon. Expired coupons stop counting by themselves.
+
+Rossmann's weekly flyer is public; its parser is waiting for real pages from the owner's Mac:
+`python3 -m babebasket.stores.rossmann probe-offers`, then commit `rossmann_probe/offers/`.
+
 ## Settings
 
 All in `config.toml`: product groups and their dm categories, shortlist thresholds, preferred brands,

@@ -5,9 +5,10 @@ from __future__ import annotations
 import math
 
 
-def quote(price_eur: float, store: str, cfg: dict) -> dict:
+def quote(price_eur: float, store: str, cfg: dict, coupon_pct: float | None = None) -> dict:
+    """coupon_pct: a coupon found for this product; the bigger of it and the store's standing coupon counts."""
     p = cfg["pricing"]
-    coupon_pct = float(cfg.get("coupons", {}).get(store, 0))
+    coupon_pct = max(float(cfg.get("coupons", {}).get(store, 0)), float(coupon_pct or 0))
     cost_eur = round(price_eur * (1 - coupon_pct / 100), 2)
     cost_vnd = cost_eur * p["vnd_per_eur"] + p.get("shipping_vnd_per_item", 0)
     sale_vnd = cost_vnd * (1 + p["markup"])

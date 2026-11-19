@@ -75,6 +75,11 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
         {"name": "Rating", "value": rating_text(product), "inline": True},
     ]
+    coupon = product.get("coupon")
+    if coupon:
+        until = f" · đến {coupon['valid_until'][8:10]}.{coupon['valid_until'][5:7]}" if coupon.get("valid_until") else ""
+        fields.append({"name": "🎟️ Coupon", "value": f"{coupon.get('label') or ''} (−{coupon['percent']:g}%){until}",
+                       "inline": True})
     pair = product.get("pair")
     if pair:
         fields[1]["name"] = "Shelf price (gội + xả)"

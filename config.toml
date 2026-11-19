@@ -34,6 +34,7 @@ categories = [
 per_day = 10             # posts drafted per day (the [groups] quotas add up to this)
 min_rating = 4.0         # hair and body: 3.9★ and below is never sold; [groups.extra] is stricter
 min_reviews = 10         # few reviews rank lower anyway (score weighs the number of reviews)
+coupon_weight = 2.0      # a valid coupon for a product/brand boosts it: 20 % -> score x1.4 (see #coupons)
 new_per_day = 1          # "gacha" pick: a new product with no rating yet, from a brand whose
                          # other products average 4.4★ or more; the card marks it 🆕
 sweet_spot_eur = 10      # students' budget: dearer products rank lower

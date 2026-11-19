@@ -88,7 +88,7 @@ def make_draft(product: dict, cfg: dict) -> dict:
         pair_detail, pair_reviews = enrich(pair)
         reviews = reviews[:8] + pair_reviews[:6]
         price = round(price + (pair.get("price_eur") or 0), 2)
-    quote = pricing.quote(price, product["store"], cfg)
+    quote = pricing.quote(price, product["store"], cfg, (product.get("coupon") or {}).get("percent"))
     draft = llm.draft_post(product, detail, reviews, cfg, pair=pair, pair_detail=pair_detail)
     warnings = llm.warnings(draft, had_reviews=bool(reviews))
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
@@ -227,6 +227,16 @@ def cmd_check(cfg: dict, conn) -> None:
         else:
             discord.reply(channel, row["discord_message_id"], f"❌ Draft #{row['id']} rejected.")
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
+
+
+def run_coupons(cfg: dict, conn) -> None:
+    """Read #coupons; a problem there must never stop approvals or the daily run."""
+    from babebasket import coupons
+
+    try:
+        coupons.process_channel(cfg, conn)
+    except Exception as err:
+        print(f"! coupons: {err}", file=sys.stderr)
 
 
 def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
@@ -501,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "post":
         cmd_post(cfg, conn)
     elif args.cmd == "check":
+        run_coupons(cfg, conn)        # new screenshots/notes in #coupons
         cmd_check(cfg, conn)          # caption cards
         cmd_check_images(cfg, conn)   # image cards
         cmd_images(cfg, conn)         # make images for newly approved captions
@@ -508,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "publish":
         cmd_publish(cfg, conn)
     elif args.cmd == "daily":
+        run_coupons(cfg, conn)
         cmd_scrape(cfg, conn, stores)
         cmd_draft(cfg, conn, None)
         cmd_post(cfg, conn)
