@@ -127,6 +127,59 @@ class ShortlistTest(unittest.TestCase):
         db.upsert_products(self.conn, [item("1", "A", "Haarkur", SHAMPOO), item("2", "B", "Haarkur", SHAMPOO)])
         self.assertEqual(self.pick(SHOP, check=lambda p: (p["product_id"] != "1", "flammable")), ["2"])
 
+    def test_three_point_nine_is_never_sold(self):
+        cfg = {**SHOP, "shortlist": {**SHOP["shortlist"], "min_rating": 4.0, "min_reviews": 10}}
+        db.upsert_products(self.conn, [item("bad", "A", "Haarkur 1", "Haarkur & Haarmaske", 3.95, 5000),
+                                       item("ok", "B", "Haarkur 2", "Haarkur & Haarmaske", 4.0, 12)])
+        self.assertEqual(self.pick(cfg), ["ok"])
+
+    def test_new_product_from_a_trusted_brand_is_the_daily_gacha_pick(self):
+        cfg = {**SHOP, "shortlist": {**SHOP["shortlist"], "new_per_day": 1}}
+        rated = [item(f"r{i}", "ISANA", f"Bodylotion {i}", "Bodylotion & Hautcreme", 4.6, 50 + i) for i in range(3)]
+        new = item("new", "ISANA", "Haarkur Neu", "Haarkur & Haarmaske", None, 0, store="rossmann")
+        unknown = item("unk", "NoName", "Haarkur Neu 2", "Haarkur & Haarmaske", None, 0)
+        db.upsert_products(self.conn, rated + [new, unknown])
+        picks = shortlist.pick(self.conn, cfg, check=safe)
+        new_picks = [p for p in picks if p.get("is_new")]
+        self.assertEqual([p["product_id"] for p in new_picks], ["new"])   # unknown brand is not trusted
+        self.assertEqual(new_picks[0]["brand_rating"], 4.6)
+
+    def test_at_most_one_new_product_a_day(self):
+        cfg = {**SHOP, "shortlist": {**SHOP["shortlist"], "new_per_day": 1}}
+        rated = [item(f"r{i}", "ISANA", f"Bodylotion {i}", "Bodylotion & Hautcreme", 4.7, 80) for i in range(3)]
+        news = [item(f"n{i}", f"ISANA", f"Haarkur Neu {i}", "Haarkur & Haarmaske", None, 0) for i in range(4)]
+        db.upsert_products(self.conn, rated + news)
+        self.assertEqual(sum(1 for p in shortlist.pick(self.conn, cfg, check=safe) if p.get("is_new")), 1)
+
+    def test_new_pick_uses_its_own_groups_slot(self):
+        cfg = {**SHOP, "shortlist": {**SHOP["shortlist"], "new_per_day": 1}}
+        brands = iter(f"B{i}" for i in range(100))
+        rows = [item(f"h{i}", next(brands), f"Haarkur {i}", "Haarkur & Haarmaske", 4.8, 900 - i) for i in range(6)]
+        rows += [item(f"b{i}", "Trusted", f"Bodylotion {i}", "Bodylotion & Hautcreme", 4.8, 800 - i) for i in range(2)]
+        rows += [item(f"b{i}", next(brands), f"Bodylotion x{i}", "Bodylotion & Hautcreme", 4.7, 700 - i) for i in range(2, 6)]
+        rows += [item(f"e{i}", next(brands), f"Tagescreme {i}", "Gesichtspflege", 4.8, 600 - i) for i in range(3)]
+        rows += [item(f"t{i}", "Trusted", f"Duschgel {i}", "Duschgel", 4.7, 50) for i in range(2)]
+        rows += [item("new", "Trusted", "Duschgel Neu", "Duschgel", None, 0)]
+        db.upsert_products(self.conn, rows)
+        picks = shortlist.pick(self.conn, cfg, check=safe)
+        count = {g: sum(1 for p in picks if p["group"] == g) for g in ("hair", "body", "extra")}
+        self.assertEqual(count, {"hair": 3, "body": 2, "extra": 1})   # SHOP quotas 3/2/1, new one inside body
+        self.assertTrue(any(p.get("is_new") and p["group"] == "body" for p in picks))
+
+    def test_one_shade_per_product(self):
+        db.upsert_products(self.conn, [
+            item("a", "MAYBELLINE", "Lippenbalsam Lifter Glaze Oil Balm 001 Clear, 5 ml", "Lippenpflege", 4.7, 6000),
+            item("b", "MAYBELLINE", "Lippenbalsam Lifter Glaze Oil Balm 010 Espresso, 5 ml", "Lippenpflege", 4.7, 5900),
+            item("c", "NYX", "Lippenmaske Smushy SOS 01, 12 ml", "Lippenpflege", 4.8, 1300),
+        ])
+        self.assertEqual(self.pick({**SHOP, "groups": {"extra": {"per_day": 2, "min_rating": 4.5, "min_reviews": 100}}}),
+                         ["a", "c"])
+
+    def test_weakly_rated_brand_gets_no_new_pick(self):
+        rated = [item(f"r{i}", "Meh", f"Bodylotion {i}", "Bodylotion & Hautcreme", 4.1, 80) for i in range(3)]
+        db.upsert_products(self.conn, rated + [item("n", "Meh", "Haarkur Neu", "Haarkur & Haarmaske", None, 0)])
+        self.assertFalse(any(p.get("is_new") for p in shortlist.pick(self.conn, SHOP, check=safe)))
+
     def test_many_reviews_beat_few_perfect_ones(self):
         self.assertGreater(shortlist.score(4.6, 3000, "", []), shortlist.score(5.0, 31, "", []))
 
@@ -243,6 +296,18 @@ class ImageLabelsTest(unittest.TestCase):
         self.assertIn("Kem ủ tóc Balea Glow", desc)
         self.assertIn("Dành cho tóc khô", desc)
         self.assertIn("▫️ Ủ 5 phút sau khi gội", desc)
+
+
+class UnratedProductTest(unittest.TestCase):
+    def test_card_and_prompt_work_without_a_rating(self):
+        p = dict(product("1"), rating=None, review_count=0, is_new=True, brand_rating=4.61)
+        card = discord.build_card(1, p, {"shelf_eur": 3.0, "coupon_pct": 0, "cost_eur": 3.0}, GOOD_DRAFT, [])
+        rating = [f["value"] for f in card["embeds"][0]["fields"] if f["name"] == "Rating"][0]
+        self.assertIn("🆕 chưa có đánh giá", rating)
+        self.assertIn("4.61", rating)
+        user = llm.build_messages(p, {}, [])[1]["content"]
+        self.assertIn("no ratings yet (new product)", user)
+        self.assertIn("chưa có (sản phẩm mới)", user)
 
 
 class LlmOutputTest(unittest.TestCase):

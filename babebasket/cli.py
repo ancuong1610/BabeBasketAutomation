@@ -33,16 +33,16 @@ def dm_categories(cfg: dict) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def cmd_scrape(cfg: dict, conn) -> None:
+def cmd_scrape(cfg: dict, conn, stores: tuple[str, ...] = ("dm", "rossmann")) -> None:
     all_rows = []
-    for category in dm_categories(cfg):
+    for category in dm_categories(cfg) if "dm" in stores else []:
         rows = dm.crawl_category(category)
         print(f"dm  {category}: {len(rows)} products")
         if not rows:
             print(f"    ! no products: is '{category}' an exact dm category name?", file=sys.stderr)
         all_rows += rows
         time.sleep(dm.DELAY_SECONDS)
-    for url in cfg.get("rossmann", {}).get("categories", []):
+    for url in cfg.get("rossmann", {}).get("categories", []) if "rossmann" in stores else []:
         try:
             rows = rossmann.crawl_category(url)
         except Exception as err:
@@ -64,7 +64,8 @@ def cmd_shortlist(cfg: dict, conn) -> list[dict]:
     for p in picks:
         q = pricing.quote(p["price_eur"], p["store"], cfg)
         print(f"{p['score']:6.2f}  {p['group']:5} {p['store']:8} {p['brand'][:20]:20} €{p['price_eur']:<6}  "
-              f"{p['rating']:.2f}★ {p['review_count']:>5}  {p['name'][:50]}")
+              + (f"NEW (brand {p.get('brand_rating', 0):.2f}★)" if p.get("is_new") else f"{p['rating']:.2f}★ {p['review_count']:>5}")
+              + f"  {p['name'][:50]}")
     return picks
 
 
@@ -460,14 +461,16 @@ def cmd_try(cfg: dict, store: str, product_id: str, image: bool = False, page: s
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="babebasket", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("scrape")
+    sc_ = sub.add_parser("scrape")
+    sc_.add_argument("--store", choices=["dm", "rossmann"], help="only this store")
     sub.add_parser("shortlist")
     d = sub.add_parser("draft")
     d.add_argument("--limit", type=int)
     sub.add_parser("post")
     sub.add_parser("check")
     sub.add_parser("publish")
-    sub.add_parser("daily")
+    dl = sub.add_parser("daily")
+    dl.add_argument("--store", choices=["dm", "rossmann"], help="scrape only this store")
     nt = sub.add_parser("notify", help="post a message to the approval channel")
     nt.add_argument("text")
     t = sub.add_parser("try")
@@ -488,8 +491,9 @@ def main(argv: list[str] | None = None) -> int:
         cmd_try(cfg, args.store, args.product_id, args.image, args.page)
         return 0
     conn = db.connect()
+    stores = (args.store,) if getattr(args, "store", None) else ("dm", "rossmann")
     if args.cmd == "scrape":
-        cmd_scrape(cfg, conn)
+        cmd_scrape(cfg, conn, stores)
     elif args.cmd == "shortlist":
         cmd_shortlist(cfg, conn)
     elif args.cmd == "draft":
@@ -504,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "publish":
         cmd_publish(cfg, conn)
     elif args.cmd == "daily":
-        cmd_scrape(cfg, conn)
+        cmd_scrape(cfg, conn, stores)
         cmd_draft(cfg, conn, None)
         cmd_post(cfg, conn)
     return 0

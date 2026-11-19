@@ -32,8 +32,10 @@ categories = [
 
 [shortlist]
 per_day = 10             # posts drafted per day (the [groups] quotas add up to this)
-min_rating = 4.2         # hair and body; [groups.extra] is stricter
-min_reviews = 30
+min_rating = 4.0         # hair and body: 3.9★ and below is never sold; [groups.extra] is stricter
+min_reviews = 10         # few reviews rank lower anyway (score weighs the number of reviews)
+new_per_day = 1          # "gacha" pick: a new product with no rating yet, from a brand whose
+                         # other products average 4.4★ or more; the card marks it 🆕
 sweet_spot_eur = 10      # students' budget: dearer products rank lower
 max_price_eur = 20       # above this a product is skipped ...
 max_price_gift_set_eur = 40   # ... except gift sets

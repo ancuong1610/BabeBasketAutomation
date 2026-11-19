@@ -61,7 +61,7 @@ the Discord channel if a run fails.
 | File | Schedule (Europe/Berlin) | SSH command |
 |---|---|---|
 | `n8n/daily.json` | 07:00 daily | `daily`: scrape, draft, send cards |
-| `n8n/check.json` | every 10 min, 07–23h | `check`: read approvals |
+| `n8n/check.json` | every 10 min, day and night | `check`: read approvals |
 
 One-time setup (already done on the Mac mini):
 1. System Settings → General → Sharing → Remote Login on.

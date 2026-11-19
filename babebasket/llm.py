@@ -128,7 +128,9 @@ def _product_info(product: dict, detail: dict) -> dict:
         "description": detail.get("description", "")[:1200],
         "features": detail.get("features", []),
         "usage": detail.get("usage", "")[:400],
-        "rating": f"{product['rating']:.1f}/5 from {product['review_count']} reviews",
+        "rating": (f"{product['rating']:.1f}/5 from {product['review_count']} reviews"
+                   if product.get("review_count") and product.get("rating") is not None
+                   else "no ratings yet (new product)"),
     }
 
 
@@ -146,7 +148,9 @@ def build_messages(product: dict, detail: dict, reviews: list[dict],
     if pair:
         extra += PAIR_NOTE
     if not review_lines:
-        extra += NO_REVIEWS_NOTE.replace("{rating}", f"{product['rating']:.1f}/5 ({product['review_count']} lượt đánh giá)")
+        rated = product.get("review_count") and product.get("rating") is not None
+        extra += NO_REVIEWS_NOTE.replace(
+            "{rating}", f"{product['rating']:.1f}/5 ({product['review_count']} lượt đánh giá)" if rated else "chưa có (sản phẩm mới)")
     if not (detail.get("description") or detail.get("claims") or detail.get("features")):
         extra += NO_DETAILS_NOTE
     user = USER_TEMPLATE.format(

@@ -43,6 +43,13 @@ def _emoji(e: str) -> str:
     return urllib.parse.quote(e)
 
 
+def rating_text(product: dict) -> str:
+    if not product.get("review_count") or product.get("rating") is None:
+        brand = f" · hãng trung bình {product['brand_rating']:.2f}★" if product.get("brand_rating") else ""
+        return f"🆕 chưa có đánh giá (hàng mới){brand}"
+    return f"⭐ {product['rating']:.2f} · {product['review_count']} reviews"
+
+
 def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str],
                has_image: bool = False) -> dict:
     labels = image_labels(draft)
@@ -66,7 +73,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     fields = [
         {"name": "Nguồn", "value": badge, "inline": True},
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
-        {"name": "Rating", "value": f"⭐ {product['rating']:.2f} · {product['review_count']} reviews", "inline": True},
+        {"name": "Rating", "value": rating_text(product), "inline": True},
     ]
     pair = product.get("pair")
     if pair:
@@ -74,8 +81,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         fields[2]["name"] = "Rating gội"
         fields += [
             {"name": "🧴 Bộ đôi", "value": f"+ {pair.get('name', '')}"[:1024], "inline": False},
-            {"name": "Rating xả", "value": f"⭐ {pair.get('rating') or 0:.2f} · {pair.get('review_count') or 0} reviews",
-             "inline": True},
+            {"name": "Rating xả", "value": rating_text(pair), "inline": True},
     ]
     if warnings:
         fields.append({"name": "⚠️ Check", "value": "\n".join(warnings)[:1024], "inline": False})
