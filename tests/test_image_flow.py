@@ -52,7 +52,9 @@ class FlowTest(unittest.TestCase):
             mock.patch.object(cli, "build_image", side_effect=fake_build),
             mock.patch.object(discord, "post_image_card", side_effect=fake_post_image_card),
             mock.patch.object(discord, "reply", side_effect=lambda ch, mid, text: self.replies.append(text)),
+            mock.patch.object(discord, "unreact", side_effect=lambda ch, mid, e: self.unreacts.append((mid, e))),
         ]
+        self.unreacts = []
         for p in self.patches:
             p.start()
 
@@ -91,6 +93,29 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(db.image_calls_for(self.conn, draft_id), 1)
         self.assertEqual(self.cards[0]["edits"], 1)  # one ✏️ edit left (max_per_post 2 in this test)
         self.assertEqual(self.cards[0]["card"]["message_reference"]["message_id"], "CAPTION")
+
+    def test_image_card_clears_the_wait_marker(self):
+        caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.assertEqual(self.unreacts, [("CAPTION", "⏳")])
+
+    def test_edit_is_acknowledged_before_the_slow_part(self):
+        caption_approved(self.conn)
+        cli.cmd_images(CFG, self.conn)
+        self.decide(None, feedback="to hơn")
+        self.assertTrue(any("Đang sửa ảnh" in r for r in self.replies))
+
+    def test_caption_approval_is_acknowledged_with_a_wait_marker(self):
+        from babebasket import db as _db
+        draft_id = _db.add_draft(self.conn, "dm", "9", {"draft": {"captions": [{"text": "a"}, {"text": "b"}]}})
+        _db.set_status(self.conn, draft_id, "pending", discord_message_id="CARD")
+        reacts = []
+        with mock.patch.object(discord, "read_decision", return_value={"status": "approved", "caption": 2}), \
+                mock.patch.object(discord, "_react", side_effect=lambda ch, mid, emojis: reacts.append((mid, emojis))), \
+                mock.patch.object(cli.time, "sleep"):
+            cli.cmd_check(CFG, self.conn)
+        self.assertEqual(reacts, [("CARD", ["⏳"])])
+        self.assertIn("⏳ Đang tạo ảnh", self.replies[0])
 
     def test_accept_makes_it_ready(self):
         draft_id = caption_approved(self.conn)

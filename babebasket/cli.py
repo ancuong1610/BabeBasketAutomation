@@ -243,7 +243,12 @@ def cmd_check(cfg: dict, conn) -> None:
         if decision["status"] == "approved":
             note = " (several numbers tapped, used the first)" if decision.get("multiple") else ""
             discord.reply(channel, row["discord_message_id"],
-                          f"✅ Draft #{row['id']} approved with caption {decision['caption']}{note}. Making the post image…")
+                          f"✅ Đã nhận draft #{row['id']}, caption {decision['caption']}{note}. ⏳ Đang tạo ảnh, "
+                          "khoảng 1 phút nữa thẻ ảnh sẽ hiện ngay dưới đây.")
+            try:
+                discord._react(channel, row["discord_message_id"], [discord.WAIT])
+            except Exception as err:
+                print(f"! ⏳ on draft #{row['id']}: {err}", file=sys.stderr)
         else:
             discord.reply(channel, row["discord_message_id"], f"❌ Draft #{row['id']} rejected.")
         print(f"draft #{row['id']}: {decision['status']} (caption {decision['caption']})")
@@ -319,6 +324,10 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
                                     reply_to=row["discord_message_id"])
     payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
+    try:  # the image card is there: the caption card no longer waits
+        discord.unreact(channel, row["discord_message_id"], discord.WAIT)
+    except Exception:
+        pass
     db.set_payload(conn, draft_id, payload)
     db.set_status(conn, draft_id, "image_pending")
     print(f"draft #{draft_id}: image card v{version} ({source})")
@@ -364,6 +373,8 @@ def cmd_check_images(cfg: dict, conn) -> None:
             elif feedback:  # a written edit wins over ✅: make the image again as asked
                 if ai_tries_left(cfg, conn, row["id"]) > 0:
                     decision = "edit"
+                    discord.reply(channel, message_id, "✏️ Đã nhận ghi chú. ⏳ Đang sửa ảnh, khoảng 1 phút nữa "
+                                                       "ảnh mới sẽ hiện ngay dưới đây.")
                     send_image_card(cfg, conn, row, payload, ai=True, feedback=feedback)
                 else:
                     decision = "edit refused"

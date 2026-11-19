@@ -102,7 +102,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
     }
     card = {
-        "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject",
+        "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · bot phản hồi trong khoảng 1 phút",
         "embeds": [{k: v for k, v in embed.items() if v}],
         "allowed_mentions": {"parse": []},
     }
@@ -243,6 +243,14 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
         else:
             unreadable = True
     return {"text": " / ".join(texts), "last_id": last_id, "unreadable": unreadable and not texts}
+
+
+WAIT = "⏳"
+
+
+def unreact(channel_id: str, message_id: str, emoji: str) -> None:
+    """Remove the bot's own reaction (e.g. ⏳ once the image card is there)."""
+    _call("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{_emoji(emoji)}/@me")
 
 
 def reply(channel_id: str, message_id: str, text: str) -> None:

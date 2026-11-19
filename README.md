@@ -28,7 +28,7 @@ Two steps per post, so no paid AI image is made for a post you reject.
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
 - ✅ to approve, ❌ to reject
 
-**2. Image card**, sent as a reply under the caption card on the next `check` (≤10 min):
+**2. Image card**, sent as a reply under the caption card on the next `check` (≤1 min):
 
 - ✅ **accept** → queued for posting
 - ❌ **reject** → the post is dropped (wins over everything)
@@ -61,7 +61,7 @@ the Discord channel if a run fails.
 | File | Schedule (Europe/Berlin) | SSH command |
 |---|---|---|
 | `n8n/daily.json` | 07:00 daily | `daily`: scrape, draft, send cards |
-| `n8n/check.json` | every 10 min, day and night | `check`: read approvals |
+| `n8n/check.json` | every minute, day and night | `check`: read approvals |
 
 One-time setup (already done on the Mac mini):
 1. System Settings → General → Sharing → Remote Login on.
@@ -143,7 +143,7 @@ App coupons sit behind the owner's login, so they are never scraped. Instead:
 - Post a **screenshot** of the dm or Rossmann app's coupon tab in the Discord channel
   **#coupons** (one screenshot can hold many coupons), or type a short note such as
   `dm 20% Balea đến 30.11` or `Rossmann 10-fach Payback Haarpflege bis 24.11.`
-- On the next `check` (≤10 min) the text model reads it, saves each coupon with its end date
+- On the next `check` (≤1 min) the text model reads it, saves each coupon with its end date
   and replies with what it understood. ❌ on that reply deletes those coupons.
 - While a coupon is valid, products it covers rank higher (`[shortlist] coupon_weight`:
   20 % → score ×1.4; PAYBACK "10-fach" counts as 5 %). Whole-purchase coupons don't change the

@@ -8,12 +8,12 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "*/10 * * * *"
+              "expression": "* * * * *"
             }
           ]
         }
       },
-      "name": "Every 10 min, day and night",
+      "name": "Every minute, day and night",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -44,7 +44,7 @@
     }
   ],
   "connections": {
-    "Every 10 min, day and night": {
+    "Every minute, day and night": {
       "main": [
         [
           {
