@@ -70,7 +70,7 @@ temperature = 0.8
 
 [discord]
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
-owner_user_ids = ["420952578491285515"]      # only these users' reactions count; empty = any non-bot user
+owner_user_ids = []      # empty = every member of the server can approve (any non-bot user); or list user IDs to limit it
 
 [threads]
 # Post approved drafts (✅ + caption number on Discord) to the Threads account of THREADS_ACCESS_TOKEN.
