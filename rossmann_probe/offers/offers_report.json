@@ -1,0 +1,64 @@
+{
+ "fetched_at": "2026-11-19T01:39:38",
+ "home_offer_links": [
+  "http://rossmann.de/treueaktion",
+  "https://62gp.adj.st/campaign/detail?id=2-55475&amp;adj_t=5ayvero_wftbs27&amp;adj_campaign=rossmannapp&amp;adj_adgroup=treueaktion&amp;adj_creative=lego&amp;adj_fallback=https%3A%2F%2Fwww.rossmann.de%2Fde%2Fservice-und-hilfe%2Frossmann-app%23app_downloaden",
+  "https://62gp.adj.st/coupon/detail?ean=9823283009963&amp;adj_t=264m4pge_2693f70q&amp;adj_redirect=https%3A%2F%2Fwww.rossmann.de%2Fde%2Fservice-und-hilfe%2Frossmann-app",
+  "https://www.rossmann-fotowelt.de/angebote",
+  "https://www.rossmann.de/de/angebote/m/angebote",
+  "https://www.rossmann.de/de/angebote/m/neu-im-sortiment",
+  "https://www.rossmann.de/de/babywelt/monatsaktion",
+  "https://www.rossmann.de/de/k/angebote/blackrossmannweek",
+  "https://www.rossmann.de/de/kataloge/aktion/index.html",
+  "https://www.rossmann.de/de/kataloge/online-exklusive-angebote/index.html",
+  "https://www.rossmann.de/medias/Einkaufen-Kategorie-Angebote-f.png?context=bWFzdGVyfHVwbG9hZHw3NzE1fGltYWdlL3BuZ3xhR1prTDJnME9TODBOelF3TURRd09UVTVOVGt6TkM5RmFXNXJZWFZtWlc1ZlMyRjBaV2R2Y21sbFgwRnVaMlZpYjNSbFgyWXVjRzVufDgyNmU5ZmZlMTNiODJiMjM5N2Q4ZjBkNzYzY2Y1MzM2MTExOWQyZTdjYTQzNWFiYmM0Yzg4YTBiNzU2NzgwM2M"
+ ],
+ "pdf_links": [
+  "https://cms-de.rossmann.de/content/dam/rossmann/kategorien/startseite/rueckrufe/Kundeninformation%20MadeGood%20Crunchy%20Cookies%20Vanille.pdf",
+  "https://cms-de.rossmann.de/content/dam/rossmann/kategorien/startseite/rueckrufe/Rückrufplakat%20Nuby%20Wärmesensorlöffel_20261105.pdf",
+  "https://www.rossmann.de/dam/einkaufsportal/startseite/footer/Bio-Zertifikat.pdf"
+ ],
+ "offer_sitemaps": [],
+ "saved_pages": [
+  {
+   "url": "https://www.rossmann.de/de/angebote/m/angebote",
+   "file": "offers_1.html",
+   "bytes": 1330681,
+   "has_next_data": true,
+   "price_mentions": 50,
+   "percent_mentions": 659
+  },
+  {
+   "url": "https://www.rossmann.de/de/angebote/m/neu-im-sortiment",
+   "file": "offers_2.html",
+   "bytes": 1355913,
+   "has_next_data": true,
+   "price_mentions": 40,
+   "percent_mentions": 667
+  },
+  {
+   "url": "https://www.rossmann.de/de/babywelt/monatsaktion",
+   "file": "offers_3.html",
+   "bytes": 1114574,
+   "has_next_data": false,
+   "price_mentions": 3,
+   "percent_mentions": 694
+  },
+  {
+   "url": "https://www.rossmann.de/de/k/angebote/blackrossmannweek",
+   "file": "offers_4.html",
+   "bytes": 753262,
+   "has_next_data": true,
+   "price_mentions": 2,
+   "percent_mentions": 242
+  },
+  {
+   "url": "https://www.rossmann.de/de/kataloge/aktion/index.html",
+   "file": "offers_5.html",
+   "bytes": 412564,
+   "has_next_data": false,
+   "price_mentions": 0,
+   "percent_mentions": 356
+  }
+ ]
+}
