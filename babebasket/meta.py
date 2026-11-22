@@ -75,8 +75,11 @@ def _instagram_auth() -> tuple[str, ...]:
 
 
 def _instagram_host() -> str:
+    """Instagram Login tokens ("IG…") use graph.instagram.com; Facebook-type tokens ("EAA…", from the
+    dashboard's Unified login / Facebook Login for Business, or a Page token) use graph.facebook.com."""
     config.load_dotenv()
-    return "graph.instagram.com" if os.environ.get("INSTAGRAM_ACCESS_TOKEN") else "graph.facebook.com"
+    own = os.environ.get("INSTAGRAM_ACCESS_TOKEN") or ""
+    return "graph.instagram.com" if own.startswith("IG") else "graph.facebook.com"
 
 
 def instagram_publish(caption: str, image_url: str | None, extra_images: list[str] | None = None, wait_s: int = 60,

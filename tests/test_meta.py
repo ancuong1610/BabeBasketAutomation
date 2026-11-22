@@ -54,13 +54,22 @@ class MetaRequestTest(unittest.TestCase):
         self.assertEqual(self.api.call_args_list[3].kwargs["retries"], 0)
 
     def test_instagram_login_token_uses_graph_instagram_without_a_page(self):
-        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "own-ig"
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGown"
         self.api.side_effect = [{"id": "C"}, {"status_code": "FINISHED"}, {"id": "M"}, {"permalink": "https://ig/p"}]
         meta.instagram_publish(CAPTION, IMAGE)
         for call in self.api.call_args_list:
             url = urlsplit(call.args[0])
             self.assertEqual(url.netloc, "graph.instagram.com")
-            self.assertEqual(dict(parse_qsl(url.query))["access_token"], "own-ig")
+            self.assertEqual(dict(parse_qsl(url.query))["access_token"], "IGown")
+
+    def test_facebook_type_instagram_token_uses_graph_facebook(self):
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "EAAown"
+        self.api.side_effect = [{"id": "C"}, {"status_code": "FINISHED"}, {"id": "M"}, {"permalink": "https://ig/p"}]
+        meta.instagram_publish(CAPTION, IMAGE)
+        for call in self.api.call_args_list:
+            url = urlsplit(call.args[0])
+            self.assertEqual(url.netloc, "graph.facebook.com")
+            self.assertEqual(dict(parse_qsl(url.query))["access_token"], "EAAown")
 
     def test_instagram_carousel_preserves_order_and_uses_configured_version(self):
         self.api.side_effect = [{"id": "C1"}, {"id": "C2"}, {"id": "C"}, {"status_code": "FINISHED"},
