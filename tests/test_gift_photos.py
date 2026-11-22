@@ -43,3 +43,13 @@ class GiftSetPhotoTest(unittest.TestCase):
                                {"filename": "support-1.jpg", "url": "u1"}]}
         with mock.patch.object(discord, "_call", return_value=msg):
             self.assertEqual(discord.card_image_urls("CH", "M"), ["u0", "u1", "u2"])
+
+    def test_card_photo_links_are_read_from_embeds_too(self):
+        msg = {"attachments": [], "embeds": [
+            {"image": {"url": "https://cdn.discordapp.com/attachments/1/2/post.jpg?ex=1"}},
+            {"image": {"url": "https://cdn.discordapp.com/attachments/1/3/support-1.jpg?ex=1"}},
+            {"image": {"url": "https://shop/other.png"}}]}
+        with mock.patch.object(discord, "_call", return_value=msg):
+            self.assertEqual(discord.card_image_urls("CH", "M"),
+                             ["https://cdn.discordapp.com/attachments/1/2/post.jpg?ex=1",
+                              "https://cdn.discordapp.com/attachments/1/3/support-1.jpg?ex=1"])

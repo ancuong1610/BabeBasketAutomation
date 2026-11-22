@@ -347,13 +347,21 @@ def reply(channel_id: str, message_id: str, text: str) -> str:
 def card_image_urls(channel_id: str, message_id: str) -> list[str]:
     """Fresh CDN links of all photos uploaded with the card, post.jpg first, then support-1.jpg, support-2.jpg …"""
     message = _call("GET", f"/channels/{channel_id}/messages/{message_id}") or {}
-    atts = [a for a in message.get("attachments") or [] if a.get("url")]
+    # Files shown in an embed (attachment://…) are listed under the embeds, not under attachments.
+    found = {}
+    for att in message.get("attachments") or []:
+        if att.get("url"):
+            found.setdefault(att.get("filename") or att["url"].split("?")[0].rsplit("/", 1)[-1], att["url"])
+    for embed in message.get("embeds") or []:
+        url = (embed.get("image") or {}).get("url") or ""
+        name = url.split("?")[0].rsplit("/", 1)[-1]
+        if re.fullmatch(r"post\.jpg|support-\d+\.jpg", name):
+            found.setdefault(name, url)
 
-    def order(att):
-        name = att.get("filename") or ""
+    def order(name):
         m = re.search(r"support-(\d+)", name)
         return (0, 0) if name.startswith("post") else (1, int(m.group(1)) if m else 99)
-    return [a["url"] for a in sorted(atts, key=order)]
+    return [found[n] for n in sorted(found, key=order)]
 
 
 def card_image_url(channel_id: str, message_id: str) -> str | None:
