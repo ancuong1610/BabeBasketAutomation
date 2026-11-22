@@ -9,6 +9,7 @@ All Vietnamese text is drawn here, never by the image model.
 from __future__ import annotations
 
 import io
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,7 +23,7 @@ OUTLINE = (20, 20, 20)
 MARGIN = 48
 TOP = 56
 TITLE_SIZE, SUBTITLE_SIZE, TEXT_SIZE = 54, 32, 33
-TITLE_STROKE, TEXT_STROKE = 3, 2
+TITLE_STROKE, TEXT_STROKE = 2, 1  # thin outline only, no shadow
 TITLE_MAX_W = 960
 SUBTITLE_MAX_W = 900
 POINTS_MAX_W = 720
@@ -82,11 +83,6 @@ def _text(img: Image.Image, lines: list[str], f: ImageFont.FreeTypeFont, y: int,
     line_h = ascent + descent + LINE_GAP
     widths = [f.getlength(l) for l in lines]
     xs = [int((W - w) / 2) if x is None else x for w in widths]
-    shadow = Image.new("L", img.size, 0)
-    sd = ImageDraw.Draw(shadow)
-    for i, line in enumerate(lines):
-        sd.text((xs[i] + 2, y + i * line_h + 3), line, font=f, fill=150, stroke_width=stroke + 1, stroke_fill=150)
-    img.paste((0, 0, 0), (0, 0), shadow.filter(ImageFilter.GaussianBlur(3)))
     d = ImageDraw.Draw(img)
     for i, line in enumerate(lines):
         d.text((xs[i], y + i * line_h), line, font=f, fill=WHITE, stroke_width=stroke, stroke_fill=OUTLINE)
@@ -119,7 +115,7 @@ def render(scene: Image.Image, labels: dict) -> Image.Image:
     f = font(TEXT_SIZE)
     ascent, descent = f.getmetrics()
     line_h = ascent + descent + LINE_GAP
-    wrapped = [_wrap(f"• {p}", f, POINTS_MAX_W) for p in labels.get("points", []) if p]
+    wrapped = [_wrap(re.sub(r"^\s*[•▫️\-–—*·]+\s*", "", p), f, POINTS_MAX_W) for p in labels.get("points", []) if p]
     block_h = sum(len(w) for w in wrapped) * line_h - LINE_GAP + POINT_GAP * max(len(wrapped) - 1, 0)
     y = H - MARGIN - block_h
     layout["points"] = []

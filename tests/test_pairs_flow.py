@@ -9,7 +9,8 @@ from PIL import Image
 from babebasket import cli, discord, llm, postimage, scene
 
 PAIR = {"store": "dm", "product_id": "c1", "brand": "syoss", "name": "Conditioner Intense Keratin, 250 ml",
-        "price_eur": 3.45, "rating": 4.6, "review_count": 300, "image_url": "https://img/c1"}
+        "price_eur": 3.45, "rating": 4.6, "review_count": 300, "image_url": "https://img/c1",
+        "product_url": "https://www.dm.de/p/d/c1/"}
 SHAMPOO = {"store": "dm", "product_id": "s1", "brand": "syoss", "name": "Shampoo Intense Keratin, 440 ml",
            "price_eur": 4.95, "rating": 4.8, "review_count": 900, "categories": "Shampoo",
            "image_url": "https://img/s1", "product_url": "https://www.dm.de/p/d/s1/", "pair": dict(PAIR)}
@@ -49,12 +50,17 @@ class PairFlowTest(unittest.TestCase):
     def test_caption_card_names_both(self):
         quote = {"shelf_eur": 8.4, "coupon_pct": 0, "cost_eur": 8.4}
         card = discord.build_card(1, SHAMPOO, quote, DRAFT, [])
-        embed = card["embeds"][0]
-        self.assertIn("Shampoo Intense Keratin, 440 ml + Conditioner Intense Keratin", embed["title"])
+        embed, twin = card["embeds"]
+        self.assertIn("Shampoo Intense Keratin, 440 ml", embed["title"])
         names = {f["name"]: f["value"] for f in embed["fields"]}
         self.assertIn("€8.40", names["Shelf price (gội + xả)"])
-        self.assertIn("4.60", names["Rating xả"])
         self.assertIn("4.80", names["Rating gội"])
+        # the conditioner has its own link and photo, so both products can be checked before ✅
+        self.assertIn("Conditioner Intense Keratin", twin["title"])
+        self.assertEqual(twin.get("url"), SHAMPOO["pair"].get("product_url"))
+        self.assertEqual(twin["image"]["url"], SHAMPOO["pair"]["image_url"])
+        self.assertNotEqual(twin.get("url"), embed.get("url"))
+        self.assertIn("4.60", {f["name"]: f["value"] for f in twin["fields"]}["Rating xả"])
 
     def test_image_card_names_both(self):
         card = discord.build_image_card(1, SHAMPOO, "gemini", 2)

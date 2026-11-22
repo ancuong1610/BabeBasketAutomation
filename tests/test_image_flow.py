@@ -337,3 +337,87 @@ class ImageDecisionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReliabilityTest(unittest.TestCase):
+    """Failures in Discord or Threads must not cost a second AI image or a second post."""
+
+    def setUp(self):
+        import tempfile
+
+        self.conn = db.connect(":memory:")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.builds = 0
+
+        def fake_build(payload, out, cfg, ai=True, **kw):
+            self.builds += 1
+            path = f"{self.tmp.name}/draft-v{self.builds}.jpg"
+            with open(path, "wb") as fh:
+                fh.write(b"jpg")
+            payload["image_path"], payload["image_source"] = path, "gemini"
+            return path
+
+        self.patches = [mock.patch.object(cli, "build_image", side_effect=fake_build),
+                        mock.patch.object(discord, "reply"), mock.patch.object(discord, "unreact")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_failed_image_card_is_resent_without_a_new_ai_image(self):
+        draft_id = caption_approved(self.conn)
+        with mock.patch.object(discord, "post_image_card", side_effect=RuntimeError("HTTP 401")):
+            cli.cmd_images(CFG, self.conn)          # paid image made, card failed
+        with mock.patch.object(discord, "post_image_card", return_value="IMG1") as post:
+            cli.cmd_images(CFG, self.conn)          # next minute: same image is sent
+        self.assertEqual(self.builds, 1)
+        self.assertEqual(db.image_calls_for(self.conn, draft_id), 1)
+        self.assertEqual(post.call_count, 1)
+        row = self.conn.execute("SELECT status, payload FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        self.assertEqual(row["status"], "image_pending")
+        self.assertNotIn("unposted_image", json.loads(row["payload"]))
+
+    def test_one_broken_caption_card_does_not_stop_the_others(self):
+        ids = []
+        for pid in ("1", "2"):
+            payload = {"product": {"store": "dm", "product_id": pid, "brand": "B", "name": "N"},
+                       "quote": {}, "warnings": [], "draft": {"captions": [{"style": "a", "text": "x"}]}}
+            draft_id = db.add_draft(self.conn, "dm", pid, payload)
+            db.set_status(self.conn, draft_id, "pending", discord_message_id=f"M{pid}")
+            ids.append(draft_id)
+
+        def read(channel, message_id, n, owners):
+            if message_id == "M1":
+                raise RuntimeError("HTTP 404 Unknown Message")   # e.g. the card was deleted
+            return {"status": "approved", "caption": 1}
+
+        with mock.patch.object(discord, "read_decision", side_effect=read), \
+                mock.patch.object(discord, "_react"), mock.patch.object(cli.time, "sleep"):
+            cli.cmd_check(CFG, self.conn)
+        status = {r["id"]: r["status"] for r in self.conn.execute("SELECT id, status FROM drafts")}
+        self.assertEqual(status, {ids[0]: "pending", ids[1]: "approved"})
+
+    def test_lost_permalink_still_counts_as_published(self):
+        calls = []
+
+        def fake_request(url, method="GET", **kw):
+            calls.append(url)
+            if "threads_publish" in url:
+                return {"id": "MEDIA1"}
+            if "permalink" in url:
+                raise RuntimeError("HTTP 500")
+            if "fields=status" in url:
+                return {"status": "FINISHED"}
+            if "/threads?" in url:
+                return {"id": "CONTAINER1"}
+            return {"id": "USER1"}
+
+        with mock.patch.object(threads, "request_json", side_effect=fake_request), \
+                mock.patch.object(threads, "_url", side_effect=lambda path, **q: path + "?" + "&".join(f"{k}={v}" for k, v in q.items())), \
+                mock.patch.object(threads.time, "sleep"):
+            post = threads.publish("caption", "https://img")
+        self.assertEqual(post, {"id": "MEDIA1", "permalink": ""})
+        self.assertEqual(sum("threads_publish" in c for c in calls), 1)

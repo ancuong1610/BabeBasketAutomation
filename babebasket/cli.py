@@ -236,7 +236,11 @@ def cmd_check(cfg: dict, conn) -> None:
         payload = json.loads(row["payload"])
         n = len(payload["draft"].get("captions", []))
         time.sleep(0.5)  # several waiting cards are read one after another: stay under Discord's rate limit
-        decision = discord.read_decision(channel, row["discord_message_id"], n, owners)
+        try:
+            decision = discord.read_decision(channel, row["discord_message_id"], n, owners)
+        except Exception as err:  # e.g. a deleted card (404): skip it, keep reading the others
+            print(f"! caption card of draft #{row['id']}: {err}", file=sys.stderr)
+            continue
         if not decision:
             continue
         db.set_status(conn, row["id"], decision["status"], chosen_caption=decision["caption"], decided_at=db.now())
@@ -294,7 +298,11 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         return
     version = payload.get("image_versions", 0) + 1
     old_ai_image = payload.get("image_path") if payload.get("image_source") == "gemini" else None
-    if ai and not feedback and version == 1 and old_ai_image and Path(old_ai_image).exists():
+    unposted = payload.get("unposted_image") or {}
+    if unposted.get("path") and Path(unposted["path"]).exists() and unposted.get("feedback", "") == feedback:
+        # Made and paid for on an earlier run whose Discord card failed: send that image, do not make a new one.
+        path, version, use_ai, notes = unposted["path"], unposted["version"], False, unposted.get("notes", notes)
+    elif ai and not feedback and version == 1 and old_ai_image and Path(old_ai_image).exists():
         # Drafted under the old flow, which already paid for an AI image: show that one first.
         payload["image_versions"] = version
         use_ai, path = False, old_ai_image
@@ -309,21 +317,26 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
             notes.insert(0, f"✏️ {'Edited' if previous else 'New image'} with your note: “{feedback[:300]}”")
     if path is None:  # photo download failed: nothing was paid for; stay put and retry on the next check
         raise RuntimeError("product photo download failed; will retry")
-    payload["image_versions"] = version
-    if use_ai:
-        ok = payload.get("image_source") == "gemini"
-        db.log_image_call(conn, draft_id, ok)
-        if not ok:
-            notes.append("The AI image failed, so this is the plain background.")
-    fidelity = payload.get("fidelity") or {}
-    if fidelity.get("match") is False:
-        notes.append("⚠️ Có thể khác bao bì thật: " + "; ".join(fidelity.get("problems", []))
-                     + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
+    if not unposted.get("path") or unposted.get("path") != path:
+        payload["image_versions"] = version
+        if use_ai:
+            ok = payload.get("image_source") == "gemini"
+            db.log_image_call(conn, draft_id, ok)
+            if not ok:
+                notes.append("The AI image failed, so this is the plain background.")
+        fidelity = payload.get("fidelity") or {}
+        if fidelity.get("match") is False:
+            notes.append("⚠️ Có thể khác bao bì thật: " + "; ".join(fidelity.get("problems", []))
+                         + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
+        # Saved before the Discord card goes out: if posting fails, the next run resends this image.
+        payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "notes": notes}
+        db.set_payload(conn, draft_id, payload)
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
                                     reply_to=row["discord_message_id"])
     payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
+    payload.pop("unposted_image", None)
     try:  # the image card is there: the caption card no longer waits
         discord.unreact(channel, row["discord_message_id"], discord.WAIT)
     except Exception:
@@ -354,6 +367,10 @@ def cmd_check_images(cfg: dict, conn) -> None:
         if not message_id:
             continue
         try:
+            unposted = payload.get("unposted_image")
+            if unposted:  # an edited image was made but its card failed to post: send it now
+                send_image_card(cfg, conn, row, payload, ai=True, feedback=unposted.get("feedback", ""))
+                continue
             decision = discord.read_image_decision(channel, message_id, owners)
             # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
             notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),

@@ -11,6 +11,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import sys
 import time
 import urllib.parse
 
@@ -63,7 +64,11 @@ def publish(text: str, image_url: str | None = None, wait_s: int = 60) -> dict:
         raise RuntimeError("Threads container not ready in time")
     # Never retried automatically: a retry after a lost reply could post twice.
     media = request_json(_url(f"{uid}/threads_publish", creation_id=container), method="POST", retries=0)["id"]
-    link = request_json(_url(media, fields="permalink")).get("permalink", "")
+    try:  # the post is live already: a failed link lookup must not make the caller post again
+        link = request_json(_url(media, fields="permalink")).get("permalink", "")
+    except Exception as err:
+        print(f"! threads permalink lookup failed for {media}: {err}", file=sys.stderr)
+        link = ""
     return {"id": media, "permalink": link}
 
 

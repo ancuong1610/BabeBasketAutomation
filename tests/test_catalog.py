@@ -79,11 +79,25 @@ class PairTest(unittest.TestCase):
 
     def test_line_contained_and_spacing(self):
         gliss = self.p("s", "Shampoo Full Hair Magic, 250 ml", "Schwarzkopf GLISS")
-        rows = [gliss, self.p("c", "Conditioner Express Repair Full Hair Magic, 200 ml", "Schwarzkopf GLISS")]
+        rows = [gliss, self.p("c", "Conditioner Full Hair Magic, 200 ml", "Schwarzkopf GLISS")]
         self.assertEqual(catalog.find_partner(gliss, rows)["product_id"], "c")
+        hydra = self.p("s", "Shampoo Hydra Hyaluronic, 250 ml")
+        self.assertEqual(catalog.find_partner(hydra, [hydra, self.p("c", "Conditioner Hydra Hyaluronic Pure, 200 ml")])
+                         ["product_id"], "c")
         honey = self.p("s", "Shampoo Honigschätze, 1.000 ml", "Wahre Schätze")
         rows = [honey, self.p("c", "Conditioner Honig Schätze, 250 ml", "Wahre Schätze")]
         self.assertEqual(catalog.find_partner(honey, rows)["product_id"], "c")
+
+    def test_draft_45_express_conditioner_is_not_a_twin(self):
+        gliss = self.p("s", "Shampoo Full Hair Magic, 250 ml", "Schwarzkopf GLISS")
+        for name in ["Conditioner Express Repair Full Hair Magic, 200 ml", "Spülung Express Full Hair Magic, 200 ml",
+                     "Conditioner Leave-In Full Hair Magic, 200 ml", "Spülung Kur Full Hair Magic, 200 ml",
+                     "Conditioner Full Hair Magic Maske, 200 ml", "Express-Spülung Full Hair Magic, 200 ml"]:
+            self.assertIsNone(catalog.hair_kind(self.p("c", name)), name)
+            self.assertIsNone(catalog.find_partner(gliss, [gliss, self.p("c", name, "Schwarzkopf GLISS")]), name)
+        # a real rinse-out twin of a different sub-line is not matched through the treatment words either
+        self.assertFalse(catalog.same_line(self.p("a", "Shampoo Full Hair Magic"),
+                                           self.p("b", "Conditioner Full Hair Magic Serum")))
 
     def test_no_pair_across_brands_lines_or_poor_ratings(self):
         shampoo = self.p("s", "Shampoo Colour Protect, 300 ml", "PANTENE PRO-V")

@@ -160,6 +160,10 @@ TWO_IN_ONE = re.compile(r"\d\s*in\s*1|shampoo\s*&\s*(conditioner|spülung)|(cond
 SHAMPOO_NAME = re.compile(r"^\s*(haar)?shampoo\b", re.I)
 CONDITIONER_NAME = re.compile(r"^\s*(haar)?(conditioner|spülung)\b", re.I)
 PARTNER_MIN_RATING = 3.0   # the twin of a good product; the card shows its rating so the owner can judge
+# Not a rinse-out conditioner, even if the name starts with "Conditioner"/"Spülung":
+# express/spray conditioners, leave-ins, masks and treatments are sold alone, never as a shampoo's twin.
+TREATMENT = re.compile(r"express|sprüh|spray|leave|ohne ausspülen|\bkur\b|haarkur|maske|mask|treatment|serum|\böl\b|"
+                       r"\boil\b|fluid", re.I)
 LINE_STOP = {"ml", "l", "g", "st", "und", "&", "mit", "für", "x"}
 
 
@@ -170,7 +174,7 @@ def hair_kind(product: dict) -> str | None:
         return "2in1"
     if SHAMPOO_NAME.search(name):
         return "shampoo"
-    if CONDITIONER_NAME.search(name) and not re.search(r"sprüh|spray|leave", name, re.I):
+    if CONDITIONER_NAME.search(name) and not TREATMENT.search(name):
         return "conditioner"
     return None
 
@@ -189,7 +193,10 @@ def same_line(a: dict, b: dict) -> bool:
     if "".join(wa) == "".join(wb):          # "Honig Schätze" == "Honigschätze"
         return True
     sa, sb = set(wa), set(wb)
-    return sa <= sb or sb <= sa             # "Full Hair Magic" in "Express Repair Full Hair Magic"
+    if not (sa <= sb or sb <= sa):          # "Hydra Hyaluronic" in "Hydra Hyaluronic Pure"
+        return False
+    extra = " ".join(sa ^ sb)               # but "Full Hair Magic" is not "Express Repair Full Hair Magic"
+    return not TREATMENT.search(extra)
 
 
 def _brand(p: dict) -> str:

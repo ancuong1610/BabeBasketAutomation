@@ -117,8 +117,11 @@ If a group has nothing good enough that day, the best of the others fills the ga
 Shampoo and conditioner are sold as a pair: when a shampoo (or conditioner) is picked, the
 bot looks for its twin of the same brand and line ("Shampoo Traube Hydraboost" +
 "Conditioner Traube Hydraboost"; dm lists them apart). The pair is one post: one caption
-for the set, both bottles in the picture, combined shelf price on the card. With no usable
-twin the product is sold on its own; 2in1 products never need one.
+for the set, both bottles in the picture, combined shelf price on the card; the caption card
+shows each bottle with its own link and photo. With no twin the product is sold on its own; if a
+twin exists but cannot go out, neither is picked. 2in1 products never need one. Only a rinse-out
+conditioner counts as a twin: express/spray conditioners, leave-ins, masks and treatments are
+sold alone (a shampoo's line must match exactly, or differ only by harmless words).
 At most 2 products per brand per day, and no product again within 45 days.
 
 Never picked (`babebasket/catalog.py`):

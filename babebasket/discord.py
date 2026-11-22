@@ -84,15 +84,11 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     if pair:
         fields[1]["name"] = "Shelf price (gội + xả)"
         fields[2]["name"] = "Rating gội"
-        fields += [
-            {"name": "🧴 Bộ đôi", "value": f"+ {pair.get('name', '')}"[:1024], "inline": False},
-            {"name": "Rating xả", "value": rating_text(pair), "inline": True},
-    ]
     if warnings:
         fields.append({"name": "⚠️ Check", "value": "\n".join(warnings)[:1024], "inline": False})
 
     embed = {
-        "title": f"{product['brand']} · {product['name']}{' + ' + product['pair']['name'] if product.get('pair') else ''}"[:256],
+        "title": f"{'🧴 Gội · ' if pair else ''}{product['brand']} · {product['name']}"[:256],
         "url": product.get("product_url"),
         "description": description,
         "fields": fields,
@@ -101,9 +97,21 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         "footer": {"text": f"draft {draft_id} · {draft.get('_model', '')}"},
         "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
     }
+    embeds = [{k: v for k, v in embed.items() if v}]
+    if pair:  # the twin gets its own embed: own link and own photo, so both can be checked before ✅
+        twin = {
+            "title": f"🧴 Xả · {pair.get('brand') or product['brand']} · {pair.get('name', '')}"[:256],
+            "url": pair.get("product_url"),
+            "fields": [{"name": "Rating xả", "value": rating_text(pair), "inline": True},
+                       {"name": "Giá xả", "value": f"€{pair['price_eur']:.2f}" if pair.get("price_eur") is not None
+                        else "?", "inline": True}],
+            "image": {"url": pair["image_url"]} if pair.get("image_url") else None,
+            "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
+        }
+        embeds.append({k: v for k, v in twin.items() if v})
     card = {
         "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · bot phản hồi trong khoảng 1 phút",
-        "embeds": [{k: v for k, v in embed.items() if v}],
+        "embeds": embeds,
         "allowed_mentions": {"parse": []},
     }
     if has_image:
