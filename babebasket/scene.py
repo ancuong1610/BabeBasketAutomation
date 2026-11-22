@@ -260,3 +260,65 @@ def generate(
         text = ((reply or {}).get("choices") or [{}])[0].get("message", {}).get("content", "")
         print(f"scene: no image in reply: {str(text)[:160]}", file=sys.stderr)
     return image
+
+
+# --- supporting photos (makeup) -----------------------------------------------------------
+PHOTO_TYPES = ("product_hero", "product_detail", "shade_range", "skin_swatch", "lip_swatch", "texture",
+               "application", "duplicate", "irrelevant", "uncertain")
+SUPPORT_PROMPT = """These photos come from the shop page of one product: {product}.
+Label every photo, numbered in the order given (1 = first photo). Types:
+product_hero (the pack itself), product_detail (close-up of the pack or applicator), shade_range (many shades
+side by side), skin_swatch (colour on arm/hand skin), lip_swatch (colour on lips), texture (the product itself
+smeared or close up), application (a person wearing or applying it), duplicate (same as an earlier photo),
+irrelevant (logos, text-only, unrelated), uncertain.
+For swatch, texture and application photos also say whether they show THIS product's shade ({shade}):
+true, false (another shade), or null (cannot tell / no shade named).
+Reply with JSON only: {{"photos": [{{"i": 1, "type": "...", "this_shade": true}}]}}"""
+SUPPORT_ORDER = ("lip_swatch", "skin_swatch", "application", "texture", "shade_range")  # most useful first
+MAX_SUPPORTING = 3
+
+
+def shade_of(name: str) -> str:
+    """'Lipgloss Lifter Gloss 005 Petal, 5,4 ml' -> '005 Petal'; '' when the name has no shade number."""
+    m = re.search(r"\b(\d{2,3}[A-Za-z]?(?:\s+[A-ZÄÖÜ][\wäöüß-]*){0,3})\s*,", name or "")
+    return m.group(1).strip() if m else ""
+
+
+def pick_supporting(labels: list[dict], photos: list[str]) -> list[str]:
+    """Which shop photos go into the post after the AI image: by type, never another shade, at most 3."""
+    by_type: dict[str, list[str]] = {}
+    for item in labels:
+        try:
+            i = int(item.get("i")) - 1
+        except (TypeError, ValueError):
+            continue
+        kind = item.get("type")
+        if not 0 <= i < len(photos) or kind not in SUPPORT_ORDER:
+            continue
+        if kind != "shade_range" and item.get("this_shade") is False:
+            continue  # a swatch of another shade would mislead the buyer
+        by_type.setdefault(kind, []).append(photos[i])
+    out: list[str] = []
+    for kind in SUPPORT_ORDER:
+        for url in by_type.get(kind, [])[: 1 if kind == "shade_range" else 2]:
+            if url not in out:
+                out.append(url)
+    return out[:MAX_SUPPORTING]
+
+
+def select_supporting(product: dict, cfg: dict, fetch: Callable[[str], bytes], post: Callable[..., dict] = request_json,
+                      api_key: str | None = None) -> list[str]:
+    """One vision call over the product page's extra photos (small JPEGs); returns the photo links to post."""
+    photos = (product.get("gallery") or [])[1:7]  # the first is the packshot the AI image is made from
+    if not photos:
+        return []
+    images = [fetch(small_jpg(u, 400)) for u in photos]
+    data = _vision_json(SUPPORT_PROMPT.format(product=f"{product.get('brand', '')} {product.get('name', '')}",
+                                              shade=shade_of(product.get("name", "")) or "not named"),
+                        images, cfg, post, api_key, stage="gallery")
+    return [small_jpg(u, 1200) for u in pick_supporting(data.get("photos") or [], photos)]
+
+
+def small_jpg(url: str, size: int) -> str:
+    """dm image link as a JPEG of at most size x size (Threads takes JPEG/PNG, not the WebP/AVIF of f_auto)."""
+    return re.sub(r"f_auto,q_auto,c_fit,h_\d+,w_\d+", f"f_jpg,q_auto,c_fit,h_{size},w_{size}", url)

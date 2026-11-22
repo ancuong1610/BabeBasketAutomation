@@ -119,9 +119,16 @@ young workers buying self-care consumables. Each day 10 drafts, by group (`[grou
 
 | Group | Per day | What | Minimum |
 |---|---|---|---|
-| hair | 5 | shampoo, conditioner, masks, leave-in, oils, styling | 4.2★, 30 reviews |
-| body | 3 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.2★, 30 reviews |
+| hair | 5 | shampoo, conditioner, masks, leave-in, oils, styling | 4.0★, 10 reviews |
+| body | 3 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.0★, 10 reviews |
 | extra | 2 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
+| makeup | 1 | coloured lip make-up: lipstick, lip gloss, lip oil/tint, lip liner | 4.0★, 10 reviews |
+
+**Makeup posts are carousels.** When a makeup caption is approved, one vision call labels the
+product page's extra photos (lip/skin swatch, shade range, texture, application…) and picks up to
+3 that show *this* shade (never a swatch of another shade). The image card shows them in a grid
+under the AI image; they are posted unchanged after it, as a Threads carousel. Reply
+"không ảnh phụ" to the image card to post the AI image alone. Other groups post one image.
 
 If a group has nothing good enough that day, the best of the others fills the gap.
 

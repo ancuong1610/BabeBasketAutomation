@@ -151,6 +151,17 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
+def supporting_photos(product: dict, cfg: dict) -> list[str]:
+    """Shop photos (swatches, shades) to post after the AI image. Never blocks the image itself."""
+    from babebasket import scene
+
+    try:
+        return scene.select_supporting(product, cfg, fetch_bytes)
+    except Exception as err:
+        print(f"! supporting photos for {product.get('product_id')}: {err}", file=sys.stderr)
+        return []
+
+
 def labels_for(payload: dict) -> dict:
     """The words on the post image: the draft's labels, or the owner's own text sent with 🔤."""
     labels = llm.image_labels(payload["draft"])
@@ -305,6 +316,7 @@ def cmd_post(cfg: dict, conn) -> None:
                            "they stay drafted: fix the cause (e.g. DISCORD_BOT_TOKEN in .env), then run: post")
 
 
+NO_SUPPORTING = re.compile(r"(không|ko|k|bỏ)\s*(dùng\s*|kèm\s*)?ảnh\s*phụ", re.I)
 MAX_SOURCE_BYTES = 15 * 1024 * 1024
 MIN_SOURCE_SIDE = 300
 IMAGE_EXT = re.compile(r"\.(jpe?g|png|webp)(\?|$)", re.I)
@@ -495,6 +507,9 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         payload["image_versions"] = version
         use_ai, path = False, old_ai_image
     else:
+        if (use_ai and not feedback and payload["product"].get("group") == "makeup"
+                and not payload["product"].get("pair") and "supporting" not in payload):
+            payload["supporting"] = supporting_photos(payload["product"], cfg)
         previous = None
         scene_path = payload.get("scene_path")
         if feedback and use_ai and payload.get("image_source") == "gemini" and scene_path and Path(scene_path).exists():
@@ -524,7 +539,7 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
-                                    reply_to=row["discord_message_id"])
+                                    reply_to=row["discord_message_id"], supporting=payload.get("supporting"))
     payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
     payload.pop("unposted_image", None)
     try:  # the image card is there: the caption card no longer waits
@@ -578,6 +593,11 @@ def cmd_check_images(cfg: dict, conn) -> None:
             if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
                 discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+            elif feedback and payload.get("supporting") and NO_SUPPORTING.search(feedback):
+                decision = "no supporting photos"
+                payload["supporting"] = []
+                db.set_payload(conn, row["id"], payload)
+                discord.reply(channel, message_id, "📎 Ok, bài này chỉ đăng ảnh AI, không kèm ảnh của shop.")
             elif feedback and discord.TEXT in taps:  # 🔤 + reply: new words on the same scene, no AI call
                 decision = "text"
                 send_image_card(cfg, conn, row, payload, ai=False, text=feedback)
@@ -641,7 +661,7 @@ def cmd_publish(cfg: dict, conn) -> None:
             continue
         try:
             image_url = discord.card_image_url(channel, payload.get("image_message_id") or row["discord_message_id"])
-            post = threads.publish(text, image_url)
+            post = threads.publish(text, image_url, extra_images=payload.get("supporting") or None)
         except Exception as err:
             attempts = payload.get("publish_attempts", 0) + 1
             payload["publish_attempts"] = attempts

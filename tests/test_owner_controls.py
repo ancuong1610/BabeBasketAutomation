@@ -146,6 +146,7 @@ class TextOnlyEditTest(unittest.TestCase):
 
 class UsageTest(unittest.TestCase):
     def test_calls_are_stored_per_draft_and_reported(self):
+        usage._pending.clear()
         conn = db.connect(":memory:")
         reply = {"id": "gen-1", "model": "google/gemini-3.1-flash-image",
                  "usage": {"prompt_tokens": 1400, "completion_tokens": 1300, "cost": 0.068,

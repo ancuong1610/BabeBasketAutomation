@@ -160,7 +160,7 @@ def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | No
 
 
 def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
-                     reply_to: str | None = None) -> dict:
+                     reply_to: str | None = None, supporting: list[str] | None = None) -> dict:
     kind = "" if source == "gemini" else " (plain background)"
     if edits_left > 0:
         edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
@@ -170,15 +170,20 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
                "🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý")
     if note:
         content += f"\n{note}"
+    if supporting:
+        content += (f"\n📎 Đăng kèm {len(supporting)} ảnh gốc của shop (swatch/bảng màu), xem lưới bên dưới. "
+                    "Không muốn: reply \"không ảnh phụ\".")
     card = {
         "content": content[:2000],
-        "embeds": [{
+        "embeds": [{k: v for k, v in {
             "title": (f"{product.get('brand', '')} · {product.get('name', '')}"
                       + (f" + {product['pair'].get('name', '')}" if product.get("pair") else ""))[:256],
+            "url": product.get("product_url") if supporting else None,  # same link groups the photos as a grid
             "image": {"url": "attachment://post.jpg"},
             "footer": {"text": f"draft {draft_id} · image"},
             "color": STORE_COLORS.get(product.get("store"), 0xF6E7A1),
-        }],
+        }.items() if v}] + ([{"url": product["product_url"], "image": {"url": u}} for u in supporting[:3]]
+                            if supporting and product.get("product_url") else []),
         "attachments": [{"id": 0, "filename": "post.jpg"}],
         "allowed_mentions": {"parse": []},
     }

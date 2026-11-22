@@ -47,21 +47,40 @@ def _url(path: str, **params) -> str:
     return API + path + "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
 
 
-def publish(text: str, image_url: str | None = None, wait_s: int = 60) -> dict:
-    uid = request_json(_url("me", fields="id"))["id"]
-    media_type = "IMAGE" if image_url else "TEXT"
-    # Creating a container publishes nothing, so a retry here is harmless.
-    container = request_json(_url(f"{uid}/threads", media_type=media_type, text=text, image_url=image_url),
-                             method="POST")["id"]
+MAX_CAROUSEL = 10  # we post at most 10 photos (Threads allows more); the AI image always comes first
+
+
+def _wait(container: str, wait_s: int) -> None:
     for _ in range(max(1, wait_s // 5)):
         state = request_json(_url(container, fields="status,error_message"))
         if state.get("status") == "FINISHED":
-            break
+            return
         if state.get("status") in ("ERROR", "EXPIRED"):
             raise RuntimeError(f"Threads container {state.get('status')}: {state.get('error_message')}")
         time.sleep(5)
+    raise RuntimeError("Threads container not ready in time")
+
+
+def publish(text: str, image_url: str | None = None, wait_s: int = 60, extra_images: list[str] | None = None) -> dict:
+    """Post text with one image, or a carousel when `extra_images` are given (image_url first)."""
+    uid = request_json(_url("me", fields="id"))["id"]
+    images = ([image_url] if image_url else []) + list(extra_images or [])
+    images = images[:MAX_CAROUSEL]
+    # Creating containers publishes nothing, so a retry here is harmless.
+    if len(images) > 1:
+        children = []
+        for url in images:
+            child = request_json(_url(f"{uid}/threads", media_type="IMAGE", image_url=url, is_carousel_item="true"),
+                                 method="POST")["id"]
+            _wait(child, wait_s)
+            children.append(child)
+        container = request_json(_url(f"{uid}/threads", media_type="CAROUSEL", children=",".join(children),
+                                      text=text), method="POST")["id"]
     else:
-        raise RuntimeError("Threads container not ready in time")
+        media_type = "IMAGE" if image_url else "TEXT"
+        container = request_json(_url(f"{uid}/threads", media_type=media_type, text=text, image_url=image_url),
+                                 method="POST")["id"]
+    _wait(container, wait_s)
     # Never retried automatically: a retry after a lost reply could post twice.
     media = request_json(_url(f"{uid}/threads_publish", creation_id=container), method="POST", retries=0)["id"]
     try:  # the post is live already: a failed link lookup must not make the caller post again

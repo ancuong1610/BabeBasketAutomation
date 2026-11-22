@@ -111,7 +111,7 @@ class CmdPublishTest(unittest.TestCase):
         draft_id = approved_draft(self.conn)
         with mock.patch.object(threads, "publish", return_value={"id": "M1", "permalink": "https://t/p"}) as pub:
             cli.cmd_publish(CFG, self.conn)
-        pub.assert_called_once_with("Caption hai 99🐠", "https://cdn/post.jpg")
+        pub.assert_called_once_with("Caption hai 99🐠", "https://cdn/post.jpg", extra_images=None)
         status, payload = self.row(draft_id)
         self.assertEqual(status, "published")
         self.assertEqual(payload["threads"]["permalink"], "https://t/p")

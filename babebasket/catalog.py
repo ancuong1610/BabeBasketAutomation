@@ -32,6 +32,10 @@ SUPPLEMENT_CATS = re.compile(r"hautbild|wohlbefinden|vitamine|mineralstoffe|abne
 SUPPLEMENT_FORM = re.compile(r"kapseln|tabletten|dragees|pulver|trinkampullen|shot\b|gummies", re.I)
 BEAUTY_SUPPLEMENT = re.compile(r"haut|haar|nägel|biotin|kollagen|collagen|hyaluron|beauty|glow|abnehm|figur|sättigung", re.I)
 
+# Coloured lip make-up (shades matter: these posts carry swatch photos). Lip balm stays in "extra".
+MAKEUP = re.compile(r"lippen make-up|lippenstift|lipstick|lip ?gloss|lip ?oil|lip ?tint|lip ?stain|liquid lip|"
+                    r"lip ?lacquer|lip ?cream|lipliner|lippenkonturenstift|lip ?plumper", re.I)
+
 # --- groups (checked in this order) ------------------------------------------------------
 GROUP_RULES = [
     ("extra", re.compile(r"geschenkset|geschenk|adventskalender|\bset\b", re.I)),          # gift sets
@@ -43,6 +47,7 @@ GROUP_RULES = [
     ("extra", re.compile(r"sonne|\blsf\b|\bspf\b|after sun", re.I)),                         # sun care
     ("body", re.compile(r"bodylotion|körper|hautcreme|deo|handcreme|handmaske|fuß|duschgel|dusch|"
                         r"peeling|body scrub|badesalz|badezusatz|intim", re.I)),
+    ("makeup", MAKEUP),                                                                     # lip make-up (shades)
     ("extra", re.compile(r"gesicht|tagescreme|nachtcreme|serum|augen|feuchtigkeitscreme|lippe|pickel|mitesser",
                          re.I)),                                                            # skincare, lip care
 ]

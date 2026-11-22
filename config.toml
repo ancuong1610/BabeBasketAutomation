@@ -22,6 +22,12 @@ min_reviews = 100
 dm = ["Sonnenpflege", "Gesichtspflege", "Hautbild", "Wohlbefinden & Stärkung", "Abnehmprodukte",
       "Geschenksets", "Pflegeprodukte für Männer"]
 
+[groups.makeup]
+# Coloured lip make-up (owner, 2026-11-22: +1 a day, same bar as hair/body). Posts carry the
+# AI image plus the store's swatch / shade photos as a carousel.
+per_day = 1
+dm = ["Lippen Make-up"]
+
 [rossmann]
 # Category page URLs on rossmann.de (no query string). Fill in after running the probe:
 #   python3 -m babebasket.stores.rossmann probe
@@ -37,7 +43,7 @@ offer_pages = [
 
 
 [shortlist]
-per_day = 10             # posts drafted per day (the [groups] quotas add up to this)
+per_day = 11             # posts drafted per day (the [groups] quotas add up to this)
 min_rating = 4.0         # hair and body: 3.9★ and below is never sold; [groups.extra] is stricter
 min_reviews = 10         # few reviews rank lower anyway (score weighs the number of reviews)
 coupon_weight = 2.0      # a valid coupon for a product/brand boosts it: 20 % -> score x1.4 (see #coupons)
