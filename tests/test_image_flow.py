@@ -300,6 +300,13 @@ class ReadFeedbackTest(unittest.TestCase):
             self.assertEqual(discord.read_image_feedback("CH", "IMG", [], accept_plain=True)["text"],
                              "làm sản phẩm to ra")
 
+    def test_reply_to_the_caption_card_counts(self):
+        msgs = [{"id": "11", "content": "tay cầm sản phẩm", "author": {"id": "42"},
+                 "message_reference": {"message_id": "CAP"}}]
+        with mock.patch.object(discord, "_call", return_value=msgs):
+            self.assertEqual(discord.read_image_feedback("CH", "IMG", [])["text"], "")
+            self.assertEqual(discord.read_image_feedback("CH", "IMG", [], also=("CAP",))["text"], "tay cầm sản phẩm")
+
     def test_empty_content_means_intent_missing(self):
         msgs = [{"id": "11", "content": "", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}}]
         with mock.patch.object(discord, "_call", return_value=msgs):

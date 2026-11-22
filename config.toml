@@ -98,3 +98,16 @@ enabled = true
 # AI images are made only after the caption is approved (about $0.08 each).
 max_per_day = 30         # paid image requests per day; after that the plain background is used
 max_per_post = 3         # first image + two ✏️ edits
+# Where the AI image comes from:
+#   "openrouter" = paid API (model above, ~$0.08 each)
+#   "gemini_web" = free: the owner's Gemini Plus in real Chrome (babebasket/gemini_web.py).
+#                  Sign in once with `python3 -m babebasket gemini-login`. Needs a GUI session.
+style = "k1"              # Lab D: "k1" = diagonal flat lay on a pastel colour (owner's pick), "k0" = hand in a dm aisle
+backend = "gemini_web"    # needs `check` in the GUI session (LaunchAgent), never over SSH
+
+[image.gemini_web]
+ratio = "3:4"            # Gemini has no 4:5; postimage crops 3:4 to 1080x1350
+timeout = 180            # seconds to wait for Gemini's image
+daily_cap = 30           # Gemini images per day, across runs (~/.babebasket/gemini-daily-count.json)
+min_gap = 5              # random pause between images, seconds
+max_gap = 10

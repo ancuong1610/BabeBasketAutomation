@@ -61,6 +61,41 @@ PAIR_SCENE_NOTE = (
 )
 
 
+# K1 "flat lay chéo" from Lab D (2026-11-22, Gemini web): 4.45 overall, 4.62 without the pair row;
+# best style for the serum (20/20). Rewritten from the Lab D report; the original lives in
+# styles.json on the MacBook. [image] style = "k1" in config.toml picks it; "k0" = PROMPT above.
+PROMPT_K1 = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
+
+Use the product in the attached image: {product}.
+Scene: a styled top-down flat lay shot CLOSE UP, camera low above the product so the product is \
+BIG and clearly the hero of the photo. The product lies on a smooth seamless surface, rotated diagonally \
+about 30 degrees. The background is a soft pastel colour taken from the product's own packaging \
+(for example light blue for a blue label, blush pink for a pink one, deep navy for a navy tin). \
+A few small props that fit the product and match its colours: water droplets, a corner of a soft \
+folded towel, two or three petals. Soft diffused daylight from the upper left, gentle natural shadow, \
+realistic high-end product photography, slightly saturated colours.
+
+Hard rules:
+- The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
+Do not redesign, translate or invent anything on the packaging. Exactly as many items as in the attached image.
+- Product sharp, front label facing the camera and readable, fully visible, not cropped.
+- SIZE: the product is large. It fills about 60-70% of the image width (a tall bottle or tube instead \
+fills almost the whole band between 22% and 74% of the image height). A small product far away on a big \
+empty background is wrong.
+- Put the product exactly in the CENTRE of the image, horizontally and vertically within that band. \
+Props are few and small, only at the left and right edges, partly cut off by the frame.
+- Keep the top 20% and the bottom 24% of the image calm (plain background colour, no props), \
+because text will be added there later.
+- No hands, no people. Do not add any text, captions, stickers, logos, watermarks or price tags."""
+
+PAIR_SCENE_NOTE_K1 = (
+    "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
+    "Show BOTH bottles, lying next to each other on the surface, both front labels fully visible and "
+    "unchanged. Two bottles, not one. Keep their true relative sizes as in the attached image. "
+    "Together they take the central product area described above."
+)
+
+
 def _volume_ml(name: str) -> float | None:
     """'…, 1.000 ml' -> 1000; '…, 1 l' -> 1000; '…, 50 g' -> 50 (grams treated like ml)."""
     m = re.search(r"(\d[\d.,]*)\s*(ml|l|g)\b", name or "", re.I)
@@ -224,14 +259,23 @@ def generate(
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
     else:
-        size = "" if pair else size_hint(product.get("name", ""))
-        text = PROMPT.format(product=product_name, size=size) + (PAIR_SCENE_NOTE if pair else "") \
-            + (PACKAGING_NOTE.format(facts=facts) if facts else "") \
+        if image_cfg.get("style", "k0") == "k1":
+            text = PROMPT_K1.format(product=product_name) + (PAIR_SCENE_NOTE_K1 if pair else "")
+        else:
+            size = "" if pair else size_hint(product.get("name", ""))
+            text = PROMPT.format(product=product_name, size=size) + (PAIR_SCENE_NOTE if pair else "")
+        text += (PACKAGING_NOTE.format(facts=facts) if facts else "") \
             + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
         content = [
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
+    if image_cfg.get("backend", "openrouter") == "gemini_web":  # free: the owner's Gemini in Chrome
+        from babebasket import gemini_web
+
+        text = content[0]["text"].replace("4:5", gemini_web._cfg(cfg)["ratio"])
+        images = [previous, packshot] if feedback and previous else [packshot]
+        return gemini_web.generate_image(images, text, cfg)
     from babebasket import usage
 
     body = {

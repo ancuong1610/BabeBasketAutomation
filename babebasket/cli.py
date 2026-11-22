@@ -638,7 +638,8 @@ def cmd_check_images(cfg: dict, conn) -> None:
             decision = discord.image_decision(taps)
             # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
             notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),
-                                                accept_plain=len(waiting) == 1)
+                                                accept_plain=len(waiting) == 1,
+                                                also=tuple(i for i in (row["discord_message_id"],) if i))
             if notes["last_id"]:
                 payload["feedback_seen"] = notes["last_id"]
                 db.set_payload(conn, row["id"], payload)
@@ -815,9 +816,33 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("product_id")
     t.add_argument("--image", action="store_true", help="also render the post image to data/images/")
     t.add_argument("--page", help="rossmann: saved category page (default rossmann_probe/category.html)")
+    sub.add_parser("gemini-login", help="open Chrome on the Gemini bot profile to sign in by hand")
+    gt = sub.add_parser("gemini-test", help="one Gemini-in-Chrome scene from a local packshot, no DB/Discord")
+    gt.add_argument("image")
+    gt.add_argument("--name", default="the product in the attached image")
+    gt.add_argument("--out", default=str(DATA / "images" / "gemini-test.jpg"))
     args = ap.parse_args(argv)
 
+    if args.cmd == "gemini-login":
+        from babebasket import gemini_web
+
+        gemini_web.login()
+        return 0
     cfg = config.load()
+    if args.cmd == "gemini-test":
+        from babebasket import scene
+
+        image_cfg = {**cfg.get("image", {}), "backend": "gemini_web", "enabled": True}
+        img = scene.generate(Path(args.image).read_bytes(), {"brand": "", "name": args.name},
+                             {**cfg, "image": image_cfg})
+        if not img:
+            print("no image (see the gemini_web line above)", file=sys.stderr)
+            return 1
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(img)
+        print(f"image: {out} ({len(img)} bytes)")
+        return 0
     if args.cmd == "notify":
         from babebasket import discord
 

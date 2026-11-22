@@ -69,7 +69,13 @@ the Discord channel if a run fails.
 | File | Schedule (Europe/Berlin) | SSH command |
 |---|---|---|
 | `n8n/daily.json` | 07:00 daily | `daily`: scrape, draft, send cards |
-| `n8n/check.json` | every minute, day and night | `check`: read approvals |
+| `n8n/check.json` | **inactive since 2026-11-22** | replaced by the LaunchAgent below |
+
+`check` (every minute: read approvals, make images, publish) runs as a LaunchAgent in the
+logged-in GUI session instead: `scripts/install_check_agent.sh` (`remove` to uninstall). Reason:
+Chrome started over SSH cannot read the login keychain and loses the Gemini sign-in for good,
+so `gemini_web` refuses to run over SSH. Do not reactivate the n8n check workflow while the
+agent is installed. Status: `launchctl print gui/$(id -u)/com.babebasket.check`.
 
 One-time setup (already done on the Mac mini):
 1. System Settings → General → Sharing → Remote Login on.
@@ -111,6 +117,26 @@ Every OpenRouter call (caption, packaging, image, image_edit, fidelity, coupon) 
 
 Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
 Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.
+
+### Free images: Gemini in Chrome (`[image] backend = "gemini_web"`)
+
+Instead of the paid OpenRouter image model, `babebasket/gemini_web.py` drives real Google Chrome
+(Playwright, visible window) with the owner's Gemini Plus account: a new chat per image,
+"Create image", the packshot uploaded, ratio 3:4 (1792×2400, cropped to 1080×1350 later),
+the first image Gemini returns downloaded straight into memory (never via `~/Downloads`).
+The packaging description and fidelity check still use the text model on OpenRouter.
+
+1. Sign in once (owner only, by hand): `.venv/bin/python -m babebasket gemini-login`, sign in to
+   Gemini in the Chrome that opens, then quit that Chrome with Cmd+Q. The profile lives in
+   `~/.babebasket/gemini-profile`; it must not be open while the pipeline runs.
+2. Test one image, no DB/Discord: `.venv/bin/python -m babebasket gemini-test data/gemini_test/serum.png`.
+
+Safety: at most 30 images a day (`[image.gemini_web] daily_cap`, counted in
+`~/.babebasket/gemini-daily-count.json`), a random 5–10 s gap between images. A sign-in page,
+captcha or "unusual traffic" stops it: one ⚠️ on Discord, plain backgrounds until
+`gemini-login` is run again. Chrome needs the Mac mini's GUI session to be logged in.
+Automating the Gemini web app may break Google's terms; the account could be limited.
+Switch back any time with `backend = "openrouter"`.
 
 ## What gets picked
 
