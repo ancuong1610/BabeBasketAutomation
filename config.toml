@@ -94,8 +94,9 @@ enabled = true
 graph_version = "v21.0"
 
 [facebook]
-# Set META_PAGE_ACCESS_TOKEN and FACEBOOK_PAGE_ID in .env before enabling.
-enabled = false
+# Page token saved by `python3 -m babebasket facebook-setup` (data/facebook_page.json, never expires),
+# or META_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID in .env. On since 2026-11-22 (Page Babe Basket).
+enabled = true
 
 [instagram]
 # Set INSTAGRAM_ACCESS_TOKEN (Instagram Login) or META_PAGE_ACCESS_TOKEN, plus INSTAGRAM_USER_ID, in .env first.
