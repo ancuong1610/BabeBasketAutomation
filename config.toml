@@ -91,7 +91,7 @@ owner_user_ids = []      # empty = every member of the server can approve (any n
 enabled = true
 
 [image]
-# Gemini image model on OpenRouter that puts the packshot in a hand in a drugstore aisle.
+# Gemini image model on OpenRouter that uses the shop packshot to make the post image.
 # Switch to "google/gemini-3-pro-image" for higher quality (costs more). enabled = false -> plain background.
 model = "google/gemini-3.1-flash-image"
 enabled = true
@@ -102,7 +102,10 @@ max_per_post = 3         # first image + two ✏️ edits
 #   "openrouter" = paid API (model above, ~$0.08 each)
 #   "gemini_web" = free: the owner's Gemini Plus in real Chrome (babebasket/gemini_web.py).
 #                  Sign in once with `python3 -m babebasket gemini-login`. Needs a GUI session.
-style = "k1"              # Lab D: "k1" = diagonal flat lay on a pastel colour (owner's pick), "k0" = hand in a dm aisle
+# 🏪 k0 = in the store · 🎨 k1 = flat lay · 🤲 k3 = close-up hand · 🫧 k4 = texture
+default_style = "k0"
+texture_categories = ["Bodylotion & Hautcreme", "Handcreme & Handmasken", "Gesichtspflege",
+                      "Körperpeeling & Body Scrub", "Haarkur & Haarmaske", "Sonnenpflege", "Körperöl"]
 backend = "gemini_web"    # needs `check` in the GUI session (LaunchAgent), never over SSH
 
 [image.gemini_web]

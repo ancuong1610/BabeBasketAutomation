@@ -117,6 +117,23 @@ class FlowTest(unittest.TestCase):
             cli.cmd_check(CFG, self.conn)
         self.assertEqual(reacts, [("CARD", ["⏳"])])
         self.assertIn("⏳ Đang tạo ảnh", self.replies[0])
+        self.assertEqual(self.row(draft_id)[1]["style"], "k0")
+        self.assertIn("kiểu 🏪 trong cửa hàng", self.replies[0])
+
+    def test_caption_approval_persists_style_tap_or_configured_default(self):
+        cfg = {**CFG, "image": {"default_style": "k3"}}
+        for tap, expected, label in (("k1", "k1", "🎨 flat lay"), (None, "k3", "🤲 cận tay")):
+            with self.subTest(tap=tap):
+                draft_id = caption_approved(self.conn)
+                db.set_status(self.conn, draft_id, "pending")
+                decision = {"status": "approved", "caption": 1, "style": tap, "multiple_styles": bool(tap)}
+                with mock.patch.object(discord, "read_decision", return_value=decision), \
+                        mock.patch.object(discord, "_react"), mock.patch.object(cli.time, "sleep"):
+                    cli.cmd_check(cfg, self.conn)
+                status, payload = self.row(draft_id)
+                self.assertEqual((status, payload["style"]), ("approved", expected))
+                self.assertIn(f"kiểu {label}", self.replies[-1])
+                self.assertEqual("đã chọn kiểu đầu tiên" in self.replies[-1], bool(tap))
 
     def test_accept_makes_it_ready(self):
         draft_id = caption_approved(self.conn)
@@ -196,6 +213,17 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(db.image_calls_for(self.conn, draft_id), 0)
         self.assertNotIn("plain background", self.cards[0]["card"]["content"])
         self.assertEqual(self.cards[0]["edits"], 2)            # both edits still available
+
+    def test_selected_style_replaces_a_prebuilt_image(self):
+        draft_id = caption_approved(self.conn)
+        payload = self.row(draft_id)[1]
+        payload.update(image_path=self.scene_file, image_source="gemini", style="k4")
+        db.set_payload(self.conn, draft_id, payload)
+
+        cli.cmd_images(CFG, self.conn)
+
+        self.assertEqual(self.builds, [True])
+        self.assertNotIn("chỉ đổi chữ", self.cards[0]["card"]["content"])
 
     def test_publish_uses_the_approved_image_card(self):
         draft_id = caption_approved(self.conn)

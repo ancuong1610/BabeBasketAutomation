@@ -26,6 +26,7 @@ Two steps per post, so no paid AI image is made for a post you reject.
 **1. Caption card** (the store's packshot, prices, rating, review summary, label texts, 4 captions):
 
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
+- 🏪 🎨 🤲 🫧 to pick the image style before approving (see [Kiểu ảnh](#kiểu-ảnh))
 - ✅ to approve, ❌ to reject
 - 🖼️ the store photo is not good: **reply to the caption card** with a photo (or a link to one)
   before ✅. The AI image is then made from that photo; for a shampoo + conditioner pair write
@@ -41,7 +42,7 @@ Two steps per post, so no paid AI image is made for a post you reject.
   ("sản phẩm to hơn, nền sáng hơn", "hand from the left", "less blur"). The AI edits *that*
   image as asked and keeps the packaging identical to the store photo, then sends a new card.
   Tapping ✏️ without replying just gets a reminder to reply. A reply wins over ✅.
-- 🔤 **new words only** (free, no AI): tap 🔤 and reply with the text. First line = title,
+- 🔤 **new words on K0** (free, no AI): tap 🔤 and reply with the text. First line = title,
   next lines = the points (up to 3); one line changes only the title. The same scene is
   lettered again and sent as a new card.
 
@@ -49,6 +50,24 @@ Replies need the bot's **Message Content Intent** switched on (Discord Developer
 your app → Bot → Privileged Gateway Intents). Without it the bot says so under the card.
 
 Status in the database: `pending` → `approved` (caption) → `image_pending` → `ready` (image) → `published`.
+
+### Kiểu ảnh
+
+Tap one style emoji on the caption card before ✅. The approval reply confirms the style.
+If you tap several, the bot uses the first one in this list.
+On an older card, add a style emoji as a reaction yourself.
+
+- 🏪 **K0 · In the store** (default) shows the product in a drugstore aisle with the title, points, and logo.
+- 🎨 **K1 · Flat lay** shows the product on a pastel surface with a few small props.
+- 🤲 **K3 · Close-up hand** shows the product held against a soft studio gradient.
+- 🫧 **K4 · Texture** shows the product beside a swatch of its contents.
+
+K1, K3, and K4 get the round logo only. The plain fallback image keeps the usual text and logo.
+
+Most posts have one image. Products in the configured texture categories, such as creams and
+lotions, can have two if the shop has a texture photo. Makeup can have up to four, including
+three shop photos of the shade. The image card previews any extras under the main image.
+Reply "không ảnh phụ" to post the main image alone.
 
 ## Setup on the Mac mini
 
@@ -93,18 +112,17 @@ One-time setup (already done on the Mac mini):
 Made only after the caption is approved (step 2 above), as one finished image (1080×1350):
 
 1. `scene.py` sends the dm/Rossmann packshot to a Gemini image model on OpenRouter
-   (`[image] model` in `config.toml`), which returns a photo of a hand holding the product
-   in a drugstore aisle. Any failure → `postimage.fallback_scene` (packshot on a cream background).
+   (`[image] model` in `config.toml`), which returns a photo in the approved style.
+   Any failure → `postimage.fallback_scene` (packshot on a cream background).
    Before that, the text model reads the packshot and writes down the packaging facts
    (container, opaque or transparent, colours and finish, cap/pump), which go into the image
    prompt as hard rules: iridescent bottles were coming out as clear plastic without them.
-   The hand is a small young Asian woman's hand, and the product's amount from its name
-   ("1.000 ml") sets its true size in the hand. After the image is made, the text model
+   In K0 and K3, the product's amount from its name ("1.000 ml") sets its true size relative
+   to the hand. After the image is made, the text model
    compares it with the packshot; if a customer would notice a difference, the image card
    says what differs ("⚠️ Có thể khác bao bì thật: …") so the owner can ✏️ or ❌.
-2. `postimage.py` draws the text the LLM wrote in `labels` (title, hero, who_for, 2–3 points;
-   `mode` = `usage` for hair/styling, `benefits` otherwise) as red boxes in Be Vietnam Pro,
-   plus the logo from `assets/logo.jpg` (replace it with a larger file when available).
+2. `postimage.py` adds the round logo from `assets/logo.jpg`. For K0 and the plain fallback,
+   it also draws the text from `labels` in Be Vietnam Pro.
 3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
 
 Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
@@ -154,7 +172,7 @@ young workers buying self-care consumables. Each day 10 drafts, by group (`[grou
 product page's extra photos (lip/skin swatch, shade range, texture, application…) and picks up to
 3 that show *this* shade (never a swatch of another shade). The image card shows them in a grid
 under the AI image; they are posted unchanged after it, as a Threads carousel. Reply
-"không ảnh phụ" to the image card to post the AI image alone. Other groups post one image.
+"không ảnh phụ" to the image card to post the AI image alone.
 
 If a group has nothing good enough that day, the best of the others fills the gap.
 

@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from babebasket import config, db, llm, pricing, shortlist, usage
+from babebasket import config, db, llm, pricing, scene, shortlist, usage
 from babebasket.config import DATA
 from babebasket.stores import dm, rossmann
 
@@ -154,12 +154,10 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
-def supporting_photos(product: dict, cfg: dict) -> list[str]:
-    """Shop photos (swatches, shades) to post after the AI image. Never blocks the image itself."""
-    from babebasket import scene
-
+def supporting_photos(product: dict, cfg: dict, **selection) -> list[str]:
+    """Shop photos to post after the AI image. Never blocks the image itself."""
     try:
-        return scene.select_supporting(product, cfg, fetch_bytes)
+        return scene.select_supporting(product, cfg, fetch_bytes, **selection)
     except Exception as err:
         print(f"! supporting photos for {product.get('product_id')}: {err}", file=sys.stderr)
         return []
@@ -183,9 +181,15 @@ def labels_from_reply(text: str, current: dict) -> dict:
     return out
 
 
+def can_reletter(payload: dict) -> bool:
+    # Image cards made before style selection always had text.
+    return scene.has_text(scene.resolve_style({}, payload.get("style")))
+
+
 def reletter(payload: dict, out, fetch_bytes=None) -> str | None:
     """Put the (new) words on the image's existing scene again. Free: no AI call."""
-    import io
+    if not can_reletter(payload):
+        return None
 
     from PIL import Image
 
@@ -220,7 +224,7 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
 
     from PIL import Image, UnidentifiedImageError
 
-    from babebasket import postimage, scene
+    from babebasket import postimage
 
     if gen is None:  # the real image model: also read the packaging first and check the result after
         gen, describe, check = scene.generate, describe or scene.describe_packaging, check or scene.check_fidelity
@@ -235,14 +239,14 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
     except Exception as err:
         print(f"! packshot download failed for {product['product_id']}: {err}", file=sys.stderr)
         return None
-    labels = labels_for(payload)
+    style = scene.resolve_style(cfg.get("image", {}), payload.get("style"))
     source, base = "fallback", None
     facts = ""
     if ai and describe:  # e.g. "opaque iridescent pink bottle": stops the model inventing clear plastic
         facts = payload.get("packaging_facts") or describe(packshot, cfg)
         payload["packaging_facts"] = facts
     extra = {k: v for k, v in (("feedback", feedback), ("previous", previous), ("facts", facts)) if v}
-    generated = gen(packshot, product, cfg, **extra) if ai else None
+    generated = gen(packshot, product, cfg, style=style, **extra) if ai else None
     payload.pop("fidelity", None)
     if generated:
         try:
@@ -261,7 +265,12 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         scene_path.parent.mkdir(parents=True, exist_ok=True)
         base.save(scene_path, "PNG")
         payload["scene_path"] = str(scene_path)
-    path = postimage.save(postimage.render(base, labels), out)
+    if source == "fallback" or scene.has_text(style):
+        image = postimage.render(base, labels_for(payload))
+    else:
+        image = postimage.render_clean(base)
+    path = postimage.save(image, out)
+    payload["style"] = style
     payload["image_path"], payload["image_source"] = str(path), source
     return str(path)
 
@@ -492,11 +501,20 @@ def cmd_check(cfg: dict, conn) -> None:
             continue
         if not decision:
             continue
-        db.set_status(conn, row["id"], decision["status"], chosen_caption=decision["caption"], decided_at=db.now())
-        if decision["status"] == "approved":
-            note = " (several numbers tapped, used the first)" if decision.get("multiple") else ""
+        approved = decision["status"] == "approved"
+        fields = {"chosen_caption": decision["caption"], "decided_at": db.now()}
+        if approved:
+            image_cfg = cfg.get("image", {})
+            style = scene.resolve_style(image_cfg, decision.get("style") or image_cfg.get("default_style") or "k0")
+            payload["style"] = style
+            fields["payload"] = json.dumps(payload, ensure_ascii=False)
+        db.set_status(conn, row["id"], decision["status"], **fields)
+        if approved:
+            note = " (đã chọn số đầu tiên trong các số đã bấm)" if decision.get("multiple") else ""
+            style_note = " (đã chọn kiểu đầu tiên trong các kiểu đã bấm)" if decision.get("multiple_styles") else ""
             discord.reply(channel, row["discord_message_id"],
-                          f"✅ Đã nhận draft #{row['id']}, caption {decision['caption']}{note}. ⏳ Đang tạo ảnh, "
+                          f"✅ Đã nhận draft #{row['id']}, caption {decision['caption']}{note}, "
+                          f"kiểu {discord.STYLE_LABELS[style]}{style_note}. ⏳ Đang tạo ảnh, "
                           "khoảng 1 phút nữa thẻ ảnh sẽ hiện ngay dưới đây.")
             try:
                 discord._react(channel, row["discord_message_id"], [discord.WAIT])
@@ -538,11 +556,14 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     from babebasket import discord
 
     draft_id = row["id"]
+    channel = cfg["discord"]["channel_id"]
+    if text and not can_reletter(payload):
+        discord.reply(channel, payload["image_message_id"], discord.TEXT_STYLE_NOTICE)
+        return
     notes = [note] if note else []
     use_ai = ai and ai_tries_left(cfg, conn, draft_id) > 0
     if ai and not use_ai:
         notes.append("AI image limit reached (see [image] in config.toml), so this is the plain background.")
-    channel = cfg["discord"]["channel_id"]
     if not payload["product"].get("image_url"):  # no product photo at all: text-only post
         db.set_status(conn, draft_id, "ready")
         discord.reply(channel, row["discord_message_id"],
@@ -560,14 +581,19 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         path = reletter(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg")
         use_ai = False
         notes.insert(0, "🔤 Đã đổi chữ trên ảnh (không dùng AI, không tốn phí).")
-    elif ai and not feedback and version == 1 and old_ai_image and Path(old_ai_image).exists():
-        # Drafted under the old flow, which already paid for an AI image: show that one first.
+    elif (ai and not feedback and version == 1 and not payload.get("style") and old_ai_image
+          and Path(old_ai_image).exists()):
+        # Reuse a legacy image when the draft was approved without recording a style.
         payload["image_versions"] = version
         use_ai, path = False, old_ai_image
     else:
-        if (use_ai and not feedback and payload["product"].get("group") == "makeup"
-                and not payload["product"].get("pair") and "supporting" not in payload):
-            payload["supporting"] = supporting_photos(payload["product"], cfg)
+        product = payload["product"]
+        if use_ai and not feedback and not product.get("pair") and "supporting" not in payload:
+            categories = (product.get("categories") or "").split("; ")
+            if product.get("group") == "makeup":
+                payload["supporting"] = supporting_photos(product, cfg)
+            elif any(category in cfg.get("image", {}).get("texture_categories", []) for category in categories):
+                payload["supporting"] = supporting_photos(product, cfg, kinds=("texture",), limit=1)
         previous = None
         scene_path = payload.get("scene_path")
         if feedback and use_ai and payload.get("image_source") == "gemini" and scene_path and Path(scene_path).exists():
@@ -597,7 +623,8 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
-                                    reply_to=row["discord_message_id"], supporting=payload.get("supporting"))
+                                    reply_to=row["discord_message_id"], supporting=payload.get("supporting"),
+                                    has_text=can_reletter(payload))
     payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
     payload.pop("unposted_image", None)
     try:  # the image card is there: the caption card no longer waits
@@ -681,8 +708,11 @@ def cmd_check_images(cfg: dict, conn) -> None:
             elif decision == "text" and payload.get("edit_hint_for") != message_id:  # 🔤 tapped, no reply yet
                 payload["edit_hint_for"] = message_id
                 db.set_payload(conn, row["id"], payload)
-                discord.reply(channel, message_id, "🔤 Reply thẻ ảnh bằng chữ mới: dòng 1 là tiêu đề, các dòng sau "
-                                                   "là các ý (tối đa 3). Chỉ 1 dòng thì chỉ đổi tiêu đề.")
+                if can_reletter(payload):
+                    discord.reply(channel, message_id, "🔤 Reply thẻ ảnh bằng chữ mới: dòng 1 là tiêu đề, các dòng sau "
+                                                       "là các ý (tối đa 3). Chỉ 1 dòng thì chỉ đổi tiêu đề.")
+                else:
+                    discord.reply(channel, message_id, discord.TEXT_STYLE_NOTICE)
             else:
                 continue
         except Exception as err:

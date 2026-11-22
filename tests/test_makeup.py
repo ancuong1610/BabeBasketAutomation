@@ -21,6 +21,11 @@ def jpg():
     return buf.getvalue()
 
 
+def build(payload, out, cfg, **kw):
+    payload["image_path"], payload["image_source"] = str(out), "gemini"
+    return str(out)
+
+
 class SelectionTest(unittest.TestCase):
     def test_lip_makeup_is_its_own_group_lip_balm_is_not(self):
         self.assertEqual(catalog.classify({"name": "Lipgloss Lifter Gloss 005 Petal, 5,4 ml"})[0], "makeup")
@@ -55,6 +60,19 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(all("f_jpg,q_auto,c_fit,h_400,w_400" in u for u in fetched))
         self.assertEqual(out, [G.format("c").replace("f_auto", "f_jpg")])
 
+    def test_texture_selection_requires_a_texture_photo_and_caps_at_one(self):
+        photos = ["detail", "texture-a", "texture-b"]
+        labels = [{"i": 1, "type": "product_detail"}, {"i": 2, "type": "texture"}, {"i": 3, "type": "texture"}]
+        self.assertEqual(scene.pick_supporting(labels, photos, kinds=("texture",), limit=1), ["texture-a"])
+        self.assertEqual(scene.pick_supporting(labels[:1], photos, kinds=("texture",), limit=1), [])
+
+    def test_without_gallery_skips_fetch_and_vision(self):
+        fetch, post = mock.Mock(), mock.Mock()
+        self.assertEqual(scene.select_supporting({"store": "rossmann"}, {}, fetch, post,
+                                                kinds=("texture",), limit=1), [])
+        fetch.assert_not_called()
+        post.assert_not_called()
+
 
 class FlowTest(unittest.TestCase):
     def setUp(self):
@@ -70,10 +88,6 @@ class FlowTest(unittest.TestCase):
         return json.loads(self.conn.execute("SELECT payload FROM drafts").fetchone()[0])
 
     def test_image_card_shows_the_photos_that_will_be_posted(self):
-        def build(payload, out, cfg, ai=True, **kw):
-            payload["image_path"], payload["image_source"] = str(out), "gemini"
-            return str(out)
-
         with mock.patch.object(cli, "build_image", side_effect=build), \
                 mock.patch.object(cli, "supporting_photos", return_value=["s1", "s2"]) as pick, \
                 mock.patch.object(discord, "post_image_card", return_value="IMG1") as post, \
@@ -86,12 +100,28 @@ class FlowTest(unittest.TestCase):
         self.assertEqual({e["url"] for e in card["embeds"]}, {"https://dm/p/L1"})
         self.assertEqual(self.payload()["supporting"], ["s1", "s2"])
 
-    def test_non_makeup_gets_no_supporting_photos(self):
+    def test_cream_category_gets_one_texture_photo(self):
         payload = self.payload()
-        payload["product"]["group"] = "hair"
+        payload["product"].update(group="body", name="Bodylotion", categories="Körperpflege; Bodylotion & Hautcreme")
         db.set_payload(self.conn, self.draft_id, payload)
-        with mock.patch.object(cli, "build_image", return_value="x.jpg"), \
-                mock.patch.object(cli, "supporting_photos") as pick, \
+        self.cfg["image"]["texture_categories"] = ["Bodylotion & Hautcreme"]
+
+        with mock.patch.object(cli, "build_image", side_effect=build), \
+                mock.patch.object(scene, "select_supporting", return_value=["texture.jpg"]) as select, \
+                mock.patch.object(discord, "post_image_card", return_value="IMG1") as post, \
+                mock.patch.object(discord, "unreact"):
+            cli.cmd_images(self.cfg, self.conn)
+        select.assert_called_once_with(payload["product"], self.cfg, cli.fetch_bytes, kinds=("texture",), limit=1)
+        self.assertEqual(self.payload()["supporting"], ["texture.jpg"])
+        self.assertIn("1 ảnh phụ của shop", post.call_args.args[1]["content"])
+
+    def test_shampoo_gets_no_supporting_photos(self):
+        payload = self.payload()
+        payload["product"].update(group="hair", name="Shampoo", categories="Shampoo")
+        db.set_payload(self.conn, self.draft_id, payload)
+        self.cfg["image"]["texture_categories"] = ["Bodylotion & Hautcreme", "Haarkur & Haarmaske"]
+        with mock.patch.object(cli, "build_image", side_effect=build), \
+                mock.patch.object(scene, "select_supporting") as pick, \
                 mock.patch.object(discord, "post_image_card", return_value="IMG1"), \
                 mock.patch.object(discord, "reply"), mock.patch.object(discord, "unreact"):
             cli.cmd_images(self.cfg, self.conn)

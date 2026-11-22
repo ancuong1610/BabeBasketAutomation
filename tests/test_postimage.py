@@ -84,6 +84,16 @@ class RenderTest(unittest.TestCase):
         x0, y0, x1, y1 = postimage.last_layout(img)["logo"]
         self.assertFalse(_close(img.getpixel(((x0 + x1) // 2, (y0 + y1) // 2)), (10, 10, 10)))
 
+    def test_clean_render_has_only_the_same_round_logo(self):
+        base = _scene((10, 10, 10))
+        clean = postimage.render_clean(base)
+        logo = postimage.last_layout(postimage.render(base, LABELS))["logo"]
+        self.assertEqual(clean.size, (1080, 1350))
+        self.assertEqual(postimage.last_layout(clean), {"logo": logo})
+        self.assertEqual(clean.getpixel((540, 60)), (10, 10, 10))
+        x0, y0, x1, y1 = logo
+        self.assertFalse(_close(clean.getpixel(((x0 + x1) // 2, (y0 + y1) // 2)), (10, 10, 10)))
+
     def test_boxes_do_not_overlap(self):
         layout = postimage.last_layout(postimage.render(_scene(), LABELS))
         boxes = [layout["title"], layout["subtitle"], *layout["points"], layout["logo"]]

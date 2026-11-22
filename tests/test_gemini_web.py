@@ -66,22 +66,69 @@ class SshGuardTest(unittest.TestCase):
 
 
 class StyleTest(unittest.TestCase):
-    def _prompt(self, style, product=PRODUCT):
-        cfg = {"image": {"enabled": True, "backend": "gemini_web", "style": style}}
+    def _prompt(self, style=None, product=PRODUCT, image_cfg=None, **kwargs):
+        cfg = {"image": {"enabled": True, "backend": "gemini_web", **(image_cfg or {})}}
         with mock.patch.object(gemini_web, "generate_image", return_value=b"IMG") as gen:
-            scene.generate(PNG, product, cfg)
+            scene.generate(PNG, product, cfg, style=style, **kwargs)
         return gen.call_args.args[1]
 
     def test_k1_is_a_flat_lay_without_hands(self):
         text = self._prompt("k1")
         self.assertIn("flat lay", text)
         self.assertIn("No hands", text)
-        self.assertNotIn("drugstore aisle", text)
+        self.assertIn("70-80% of the image height", text)
+        self.assertNotIn("22%", text)
         self.assertIn("Mixa", text)
 
     def test_k0_stays_the_default_hand_in_aisle(self):
-        self.assertIn("aisle", self._prompt("k0"))
+        text = self._prompt()
+        self.assertIn("aisle", text)
+        self.assertIn("top 20%", text)
+        self.assertIn("NO yellow, orange or warm cast", text)
+        self.assertIn("natural skin texture", text)
 
-    def test_k1_pair_asks_for_both_bottles(self):
-        text = self._prompt("k1", {**PRODUCT, "pair": {"name": "Conditioner"}})
-        self.assertIn("Two bottles, not one", text)
+    def test_k3_is_a_close_up_hand_and_gradient_with_true_scale(self):
+        text = self._prompt("k3")
+        self.assertIn("hand holding", text)
+        self.assertIn("gradient studio background", text)
+        self.assertIn("the product holds 400 ml", text)
+
+    def test_k4_shows_a_swatch_of_the_products_texture(self):
+        text = self._prompt("k4")
+        self.assertIn("swatch or smear", text)
+        self.assertIn("real texture", text)
+
+    def test_all_styles_keep_packaging_rules_and_only_k0_reserves_text_space(self):
+        for style in scene.STYLES:
+            with self.subTest(style=style):
+                text = self._prompt(style)
+                self.assertEqual("top 20%" in text, style == "k0")
+                self.assertIn("Exactly as many items", text)
+                self.assertIn("same shape, colours, brand, logo and label text", text)
+                self.assertIn("not cropped", text)
+                self.assertIn("Do not add any text", text)
+                self.assertIn("vertical 3:4 photo", text)
+
+    def test_pair_notes_preserve_both_bottles_and_relative_sizes(self):
+        pair = {**PRODUCT, "pair": {"name": "Conditioner"}}
+        for style, note in {"k0": "two hands of the same woman", "k1": "lying next to each other",
+                            "k3": "two hands of the same woman", "k4": "side by side with one swatch"}.items():
+            with self.subTest(style=style):
+                text = self._prompt(style, pair)
+                self.assertIn(note, text)
+                self.assertIn("Two bottles, not one", text)
+                self.assertIn("true relative sizes", text)
+
+    def test_edit_only_reserves_text_space_for_k0(self):
+        for style in scene.STYLES:
+            with self.subTest(style=style):
+                text = self._prompt(style, feedback="brighter", previous=b"OLD")
+                self.assertEqual("top 20%" in text, style == "k0")
+                self.assertIn('"brighter"', text)
+
+    def test_style_falls_back_through_config_and_unknowns_use_k0(self):
+        self.assertIn("flat lay", self._prompt(image_cfg={"style": "k1"}))
+        cfg = {"default_style": "k3", "style": "k1"}
+        self.assertIn("gradient", self._prompt(image_cfg=cfg))
+        self.assertIn("swatch", self._prompt("k4", image_cfg=cfg))
+        self.assertIn("aisle", self._prompt("k2", image_cfg=cfg))

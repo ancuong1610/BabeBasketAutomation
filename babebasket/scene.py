@@ -1,4 +1,4 @@
-"""Ask a Gemini image model (via OpenRouter) to put the packshot in a hand in a drugstore aisle.
+"""Ask a Gemini image model to put a shop packshot in the chosen photo scene.
 
 With `feedback` and a `previous` scene, the model edits that scene as the owner asked
 instead of starting over (the ✏️ edit = reply flow on the Discord image card).
@@ -18,6 +18,13 @@ from babebasket.config import secret
 from babebasket.http import request_json
 from babebasket.llm import OPENROUTER_URL
 
+STYLES = ("k0", "k1", "k3", "k4")
+PACKAGING_RULES = """- The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
+Do not redesign, translate or invent anything on the packaging. Exactly as many items as in the attached image.
+- Product sharp, front label facing the camera and readable, fully visible, not cropped."""
+NO_ADDED_TEXT = "- Do not add any text, captions, stickers, logos, watermarks or price tags."
+TEXT_SPACE = "- Keep the top 20% and the bottom 24% of the image calm, because text will be added there later.\n"
+
 PROMPT = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
 
 Use the product in the attached image: {product}.
@@ -28,14 +35,16 @@ The hand is small and slim, like a petite Vietnamese woman's: about 16 cm from w
 palm about 7 cm wide, natural short nails, no jewellery.{size}
 
 Hard rules:
-- The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
-Do not redesign, translate or invent anything on the packaging.
-- Product sharp, front label facing the camera, fully visible, not cropped.
+{packaging_rules}
 - Put the product in the CENTRE of the image horizontally. It fills about 45-55% of the image width \
 and sits between about 22% and 74% of the image height.
 - Keep the top 20% and the bottom 24% of the image calm (soft blurred shelf, no busy details), \
 because text will be added there later.
-- Do not add any text, captions, stickers, logos, watermarks or price tags."""
+- Use bright, neutral cool-white daylight white balance with NO yellow, orange or warm cast. Keep colours \
+true to the attached packshot. Light the product evenly and brightly so it stands out from the background, \
+never dark or underexposed. Make it look like a real smartphone photo a shop owner took, with natural skin \
+texture, not glossy CGI or over-smoothed.
+{no_added_text}"""
 
 
 EDIT_PROMPT = """Edit the FIRST attached image, a product photo for an Instagram post of a small German \
@@ -48,22 +57,20 @@ Apply those changes and keep everything else the same.
 Hard rules (they win over any request above):
 - The product must look exactly like the SECOND attached image (the original packshot): same shape, \
 colours, brand, logo and label text. Do not redesign, translate or invent anything on the packaging.
-- Product sharp, front label facing the camera, fully visible, centred horizontally.
-- Keep the top 20% and the bottom 24% of the image calm, because text will be added there later.
-- Do not add any text, captions, stickers, logos, watermarks or price tags.
+- Show exactly as many items as in the original packshot, keeping their true relative sizes.
+- Product sharp, front label facing the camera, fully visible, not cropped, centred horizontally.
+{text_space}{no_added_text}
 - Vertical 4:5 photo."""
 
 PAIR_SCENE_NOTE = (
     "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
     "Show BOTH: two hands of the same woman, each holding one bottle side by side, both front labels "
-    "fully visible and unchanged. Keep their true relative sizes (as in the attached image; a 1,000 ml "
-    "bottle is far bigger than a 200 ml one). Together they take the central product area described above."
+    "fully visible and unchanged. Two bottles, not one. Keep their true relative sizes (as in the attached image; "
+    "a 1,000 ml bottle is far bigger than a 200 ml one). Together they take the central product area described above."
 )
 
 
-# K1 "flat lay chéo" from Lab D (2026-11-22, Gemini web): 4.45 overall, 4.62 without the pair row;
-# best style for the serum (20/20). Rewritten from the Lab D report; the original lives in
-# styles.json on the MacBook. [image] style = "k1" in config.toml picks it; "k0" = PROMPT above.
+# K1 diagonal flat lay from Lab D.
 PROMPT_K1 = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
 
 Use the product in the attached image: {product}.
@@ -76,17 +83,13 @@ folded towel, two or three petals. Soft diffused daylight from the upper left, g
 realistic high-end product photography, slightly saturated colours.
 
 Hard rules:
-- The product must look exactly like the attached image: same shape, colours, brand, logo and label text. \
-Do not redesign, translate or invent anything on the packaging. Exactly as many items as in the attached image.
-- Product sharp, front label facing the camera and readable, fully visible, not cropped.
+{packaging_rules}
 - SIZE: the product is large. It fills about 60-70% of the image width (a tall bottle or tube instead \
-fills almost the whole band between 22% and 74% of the image height). A small product far away on a big \
-empty background is wrong.
-- Put the product exactly in the CENTRE of the image, horizontally and vertically within that band. \
+fills about 70-80% of the image height). A small product far away on a big empty background is wrong.
+- Put the product exactly in the CENTRE of the image, horizontally and vertically. \
 Props are few and small, only at the left and right edges, partly cut off by the frame.
-- Keep the top 20% and the bottom 24% of the image calm (plain background colour, no props), \
-because text will be added there later.
-- No hands, no people. Do not add any text, captions, stickers, logos, watermarks or price tags."""
+- No hands, no people.
+{no_added_text}"""
 
 PAIR_SCENE_NOTE_K1 = (
     "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
@@ -94,6 +97,60 @@ PAIR_SCENE_NOTE_K1 = (
     "unchanged. Two bottles, not one. Keep their true relative sizes as in the attached image. "
     "Together they take the central product area described above."
 )
+
+PROMPT_K3 = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
+
+Use the product in the attached image: {product}.
+Scene: a close-up of a young East/Southeast Asian woman's small, slim hand holding the product up, \
+with natural short nails and no jewellery.{size}
+Use a smooth, soft colour-gradient studio background inspired by the packaging: warm orange for a \
+yellow label, light blue for a blue label, or rose for a pink label. Use soft studio light for a \
+high-end, realistic product photo.
+
+Hard rules:
+{packaging_rules}
+- Keep the product large and centred, about 55-65% of the image width, with a sharp label.
+{no_added_text}"""
+
+PAIR_SCENE_NOTE_K3 = (
+    "\n\nShow the shampoo and its matching conditioner side by side: two hands of the same woman, each holding one "
+    "bottle. Two bottles, not one. Keep their true relative sizes as in the attached image."
+)
+
+PROMPT_K4 = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
+
+Use the product in the attached image: {product}.
+Scene: a top-down or slightly angled shot with the product standing or lying on a light marble or \
+pastel surface. Put a generous swatch or smear of its own contents (cream, gel, lotion, oil or gloss) \
+beside it, showing the real texture and colour. Use the packaging facts and product name to judge what \
+is inside: for example pearly liquid for shampoo, white fluid lotion for body lotion, or clear gel. \
+Keep the product large and centred.
+
+Hard rules:
+{packaging_rules}
+{no_added_text}"""
+
+PAIR_SCENE_NOTE_K4 = (
+    "\n\nShow both bottles side by side with one swatch beside them. Two bottles, not one. "
+    "Keep their true relative sizes as in the attached image."
+)
+
+STYLE_PROMPTS = {
+    "k0": (PROMPT, PAIR_SCENE_NOTE),
+    "k1": (PROMPT_K1, PAIR_SCENE_NOTE_K1),
+    "k3": (PROMPT_K3, PAIR_SCENE_NOTE_K3),
+    "k4": (PROMPT_K4, PAIR_SCENE_NOTE_K4),
+}
+
+
+def resolve_style(image_cfg: dict, style: str | None = None) -> str:
+    if style is None:
+        style = image_cfg.get("default_style") or image_cfg.get("style") or "k0"
+    return style if style in STYLES else "k0"
+
+
+def has_text(style: str) -> bool:
+    return style == "k0"
 
 
 def _volume_ml(name: str) -> float | None:
@@ -238,10 +295,13 @@ def generate(
     feedback: str = "",
     previous: bytes | None = None,
     facts: str = "",
+    *,
+    style: str | None = None,
 ) -> bytes | None:
     image_cfg = cfg.get("image", {})
     if not image_cfg.get("enabled", True):
         return None
+    style = resolve_style(image_cfg, style)
 
     def data_url(img: bytes) -> str:
         return f"data:{_mime(img)};base64," + base64.b64encode(img).decode()
@@ -253,17 +313,17 @@ def generate(
         product_name += f" + {pair.get('name', '')}"
     if feedback and previous:
         content = [
-            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback)
+            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback, no_added_text=NO_ADDED_TEXT,
+                                                       text_space=TEXT_SPACE if has_text(style) else "")
              + (PACKAGING_NOTE.format(facts=facts) if facts else "")},
             {"type": "image_url", "image_url": {"url": data_url(previous)}},
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
     else:
-        if image_cfg.get("style", "k0") == "k1":
-            text = PROMPT_K1.format(product=product_name) + (PAIR_SCENE_NOTE_K1 if pair else "")
-        else:
-            size = "" if pair else size_hint(product.get("name", ""))
-            text = PROMPT.format(product=product_name, size=size) + (PAIR_SCENE_NOTE if pair else "")
+        prompt, pair_note = STYLE_PROMPTS[style]
+        size = size_hint(product.get("name", "")) if style in ("k0", "k3") and not pair else ""
+        text = prompt.format(product=product_name, size=size, packaging_rules=PACKAGING_RULES,
+                             no_added_text=NO_ADDED_TEXT) + (pair_note if pair else "")
         text += (PACKAGING_NOTE.format(facts=facts) if facts else "") \
             + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
         content = [
@@ -306,7 +366,7 @@ def generate(
     return image
 
 
-# --- supporting photos (makeup) -----------------------------------------------------------
+# --- supporting shop photos ---------------------------------------------------------------
 PHOTO_TYPES = ("product_hero", "product_detail", "shade_range", "skin_swatch", "lip_swatch", "texture",
                "application", "duplicate", "irrelevant", "uncertain")
 SUPPORT_PROMPT = """These photos come from the shop page of one product: {product}.
@@ -328,8 +388,9 @@ def shade_of(name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def pick_supporting(labels: list[dict], photos: list[str]) -> list[str]:
-    """Which shop photos go into the post after the AI image: by type, never another shade, at most 3."""
+def pick_supporting(labels: list[dict], photos: list[str], kinds: tuple[str, ...] = SUPPORT_ORDER,
+                    limit: int = MAX_SUPPORTING) -> list[str]:
+    """Choose up to `limit` shop photos in the order of `kinds`, excluding other shades."""
     by_type: dict[str, list[str]] = {}
     for item in labels:
         try:
@@ -337,21 +398,22 @@ def pick_supporting(labels: list[dict], photos: list[str]) -> list[str]:
         except (TypeError, ValueError):
             continue
         kind = item.get("type")
-        if not 0 <= i < len(photos) or kind not in SUPPORT_ORDER:
+        if not 0 <= i < len(photos) or kind not in kinds:
             continue
         if kind != "shade_range" and item.get("this_shade") is False:
             continue  # a swatch of another shade would mislead the buyer
         by_type.setdefault(kind, []).append(photos[i])
     out: list[str] = []
-    for kind in SUPPORT_ORDER:
+    for kind in kinds:
         for url in by_type.get(kind, [])[: 1 if kind == "shade_range" else 2]:
             if url not in out:
                 out.append(url)
-    return out[:MAX_SUPPORTING]
+    return out[:limit]
 
 
 def select_supporting(product: dict, cfg: dict, fetch: Callable[[str], bytes], post: Callable[..., dict] = request_json,
-                      api_key: str | None = None) -> list[str]:
+                      api_key: str | None = None, *, kinds: tuple[str, ...] = SUPPORT_ORDER,
+                      limit: int = MAX_SUPPORTING) -> list[str]:
     """One vision call over the product page's extra photos (small JPEGs); returns the photo links to post."""
     photos = (product.get("gallery") or [])[1:7]  # the first is the packshot the AI image is made from
     if not photos:
@@ -360,7 +422,7 @@ def select_supporting(product: dict, cfg: dict, fetch: Callable[[str], bytes], p
     data = _vision_json(SUPPORT_PROMPT.format(product=f"{product.get('brand', '')} {product.get('name', '')}",
                                               shade=shade_of(product.get("name", "")) or "not named"),
                         images, cfg, post, api_key, stage="gallery")
-    return [small_jpg(u, 1200) for u in pick_supporting(data.get("photos") or [], photos)]
+    return [small_jpg(u, 1200) for u in pick_supporting(data.get("photos") or [], photos, kinds, limit)]
 
 
 def small_jpg(url: str, size: int) -> str:

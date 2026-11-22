@@ -1,7 +1,7 @@
 """Discord approval cards over the REST API (no always-on bot process needed).
 
 Two steps per post:
-1. Caption card (store packshot, captions): tap 1️⃣–4️⃣ for the caption, ✅ to approve, ❌ to reject.
+1. Caption card (store packshot, captions): pick a caption and image style, then ✅ to approve or ❌ to reject.
 2. Image card (the AI post image, made only after step 1): ✅ accept, ❌ reject,
    ✏️ edit = reply to the card with what to change ("product bigger, brighter shelf"),
    and the AI edits that image as asked.
@@ -26,6 +26,9 @@ NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
 EDIT = "✏️"
 TEXT = "🔤"  # change only the words on the image: free, no AI call
+STYLE_EMOJI = {"🏪": "k0", "🎨": "k1", "🤲": "k3", "🫧": "k4"}
+STYLE_LABELS = {"k0": "🏪 trong cửa hàng", "k1": "🎨 flat lay", "k3": "🤲 cận tay", "k4": "🫧 kết cấu"}
+TEXT_STYLE_NOTICE = "🔤 Kiểu ảnh này không có chữ, nên bấm 🔤 sẽ không đổi ảnh."
 # Owner-only marker: which store the product comes from (never part of the post itself)
 STORE_BADGES = {"dm": "🟦 DM", "rossmann": "🟥 ROSSMANN"}
 STORE_COLORS = {"dm": 0x1F5FAD, "rossmann": 0xC8102E}
@@ -143,7 +146,9 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     card = {
         "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · "
                    "🖼️ ảnh gốc chưa đẹp: **reply** thẻ này kèm ảnh, link ảnh, hoặc \"ảnh 2\" (ảnh thứ 2 của shop) trước khi ✅"
-                   + (" (ghi \"xả\" để thay ảnh dầu xả)" if pair else "") + " · bot phản hồi trong khoảng 1 phút",
+                   + (" (ghi \"xả\" để thay ảnh dầu xả)" if pair else "") + " · bot phản hồi trong khoảng 1 phút"
+                   "\n· Kiểu ảnh: 🏪 trong cửa hàng (mặc định, có chữ) · 🎨 flat lay · 🤲 cận tay · 🫧 kết cấu "
+                   "(3 kiểu sau: ảnh không chữ)",
         "embeds": embeds,
         "allowed_mentions": {"parse": []},
     }
@@ -172,23 +177,24 @@ def _react(channel_id: str, message_id: str, emojis: list[str]) -> None:
 
 def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | None = None) -> str:
     message = _send(channel_id, card, image_path)
-    _react(channel_id, message["id"], NUMBERS[:n_captions] + [APPROVE, REJECT])
+    _react(channel_id, message["id"], NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI])
     return message["id"]
 
 
 def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
-                     reply_to: str | None = None, supporting: list[str] | None = None) -> dict:
+                     reply_to: str | None = None, supporting: list[str] | None = None, has_text: bool = True) -> dict:
     kind = "" if source == "gemini" else " (plain background)"
     if edits_left > 0:
         edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
     else:
         edit = "✏️ no edits left"
-    content = (f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit} · "
-               "🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý")
+    content = f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
+    if has_text:
+        content += " · 🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý"
     if note:
         content += f"\n{note}"
     if supporting:
-        content += (f"\n📎 Đăng kèm {len(supporting)} ảnh gốc của shop (swatch/bảng màu), xem lưới bên dưới. "
+        content += (f"\n📎 Đăng kèm {len(supporting)} ảnh phụ của shop, xem lưới bên dưới. "
                     "Không muốn: reply \"không ảnh phụ\".")
     card = {
         "content": content[:2000],
@@ -223,10 +229,11 @@ def owner_taps(channel_id: str, message_id: str, emojis: list[str], owners: list
     """Which of `emojis` the owner (or any non-bot user if no owners are set) has tapped.
 
     One call reads the reaction counts; user lists are only fetched for emojis that
-    someone besides the bot has tapped (count > 1), which keeps us clear of rate limits.
+    someone besides the bot has tapped, including emojis the owner added by hand.
     """
     message = _call("GET", f"/channels/{channel_id}/messages/{message_id}")
-    tapped = {r["emoji"]["name"] for r in message.get("reactions", []) if r.get("count", 0) > 1}
+    tapped = {r["emoji"]["name"] for r in message.get("reactions", [])
+              if r.get("count", 0) > int(r.get("me", False))}
     owner_set = {str(o) for o in owners}
     found = set()
     for emoji in emojis:
@@ -240,14 +247,16 @@ def owner_taps(channel_id: str, message_id: str, emojis: list[str], owners: list
 
 
 def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
-    """Caption card. None while undecided; otherwise {'status': 'approved'|'rejected', 'caption': int|None}."""
-    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT], owners)
-    if REJECT in taps:
-        return {"status": "rejected", "caption": None}
-    if APPROVE not in taps:
+    """Read a caption card's approval, caption and image style once it is decided."""
+    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI], owners)
+    if REJECT not in taps and APPROVE not in taps:
         return None
+    styles = [style for emoji, style in STYLE_EMOJI.items() if emoji in taps]
+    style = {"style": styles[0] if styles else None, "multiple_styles": len(styles) > 1}
+    if REJECT in taps:
+        return {"status": "rejected", "caption": None, **style}
     picked = [i + 1 for i, e in enumerate(NUMBERS[:n_captions]) if e in taps]
-    return {"status": "approved", "caption": picked[0] if picked else 1, "multiple": len(picked) > 1}
+    return {"status": "approved", "caption": picked[0] if picked else 1, "multiple": len(picked) > 1, **style}
 
 
 def image_taps(channel_id: str, message_id: str, owners: list[str]) -> set[str]:

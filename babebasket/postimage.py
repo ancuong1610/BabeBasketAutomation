@@ -1,4 +1,4 @@
-"""The post image: a scene (Gemini photo or plain fallback) + outlined text + logo.
+"""Compose the post image from a scene, the round logo, and optional outlined text.
 
 Product in the centre. Title (Vietnamese name + brand) and one subtitle line centred on
 top, 2–3 points bottom-left, logo bottom-right. Text is white with a thin dark outline
@@ -107,6 +107,20 @@ def _logo() -> Image.Image:
     return logo
 
 
+def _place_logo(img: Image.Image) -> tuple[int, int, int, int]:
+    logo = _logo()
+    lx, ly = W - MARGIN - LOGO_SIZE, H - MARGIN - LOGO_SIZE
+    img.paste(logo, (lx, ly), logo)
+    return lx, ly, lx + LOGO_SIZE, ly + LOGO_SIZE
+
+
+def render_clean(scene: Image.Image) -> Image.Image:
+    """Fit the scene to the post canvas and add the logo."""
+    img = ImageOps.fit(scene.convert("RGB"), (W, H), Image.LANCZOS)
+    img.info["layout"] = {"logo": _place_logo(img)}
+    return img
+
+
 def render(scene: Image.Image, labels: dict) -> Image.Image:
     img = ImageOps.fit(scene.convert("RGB"), (W, H), Image.LANCZOS)
     layout: dict = {}
@@ -132,11 +146,7 @@ def render(scene: Image.Image, labels: dict) -> Image.Image:
         layout["points"].append(box)
         y = box[3] - TEXT_STROKE + LINE_GAP + POINT_GAP
 
-    logo = _logo()
-    lx, ly = W - MARGIN - LOGO_SIZE, H - MARGIN - LOGO_SIZE
-    img.paste(logo, (lx, ly), logo)
-    layout["logo"] = (lx, ly, lx + LOGO_SIZE, ly + LOGO_SIZE)
-
+    layout["logo"] = _place_logo(img)
     img.info["layout"] = layout
     return img
 

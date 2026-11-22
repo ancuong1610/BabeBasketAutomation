@@ -9,7 +9,7 @@ from unittest import mock
 
 from PIL import Image
 
-from babebasket import cli, db, discord, usage
+from babebasket import cli, db, discord, postimage, usage
 
 CFG = {"discord": {"channel_id": "CH", "owner_user_ids": []},
        "image": {"enabled": True, "max_per_day": 4, "max_per_post": 2}}
@@ -142,6 +142,32 @@ class TextOnlyEditTest(unittest.TestCase):
             self.assertEqual(payload["labels_override"], {"title": "Tiêu đề mới", "points": ["Ý mới"]})
             self.assertIn("không dùng AI", post.call_args.args[1]["content"])
             self.assertEqual(cli.labels_for(payload)["subtitle"], "Tóc khô")   # untouched parts stay
+
+    def test_no_text_style_rejects_relettering_on_the_image_card(self):
+        conn = db.connect(":memory:")
+        draft_id = pending_draft(conn)
+        payload = json.loads(conn.execute("SELECT payload FROM drafts").fetchone()[0])
+        payload.update(image_message_id="IMG1", image_source="gemini", style="k4")
+        db.set_payload(conn, draft_id, payload)
+        db.set_status(conn, draft_id, "image_pending")
+
+        for text in ("", "Tiêu đề mới"):
+            with self.subTest(text=text):
+                notes = {"text": text, "last_id": "R1" if text else None, "unreadable": False}
+                with mock.patch.object(discord, "image_taps", return_value={"🔤"}), \
+                        mock.patch.object(discord, "read_image_feedback", return_value=notes), \
+                        mock.patch.object(discord, "post_image_card") as post, \
+                        mock.patch.object(postimage, "render") as render, \
+                        mock.patch.object(discord, "reply") as reply:
+                    cli.cmd_check_images(CFG, conn)
+                    self.assertIsNone(cli.reletter(payload, "unused.jpg"))
+                reply.assert_called_once_with("CH", "IMG1", discord.TEXT_STYLE_NOTICE)
+                render.assert_not_called()
+                post.assert_not_called()
+
+        saved = json.loads(conn.execute("SELECT payload FROM drafts").fetchone()[0])
+        self.assertNotIn("labels_override", saved)
+        self.assertEqual(saved["image_message_id"], "IMG1")
 
 
 class UsageTest(unittest.TestCase):

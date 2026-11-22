@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from babebasket.config import secret
 from babebasket import usage
@@ -56,6 +57,27 @@ Câu mẫu đúng giọng của shop:
 
 Chỉ trả về JSON hợp lệ, không có chữ nào khác."""
 
+# The owner's full writing guide (docs/content-guide.md, 2026-11-22). The shop rules above win where they differ
+# (no seasons/weather, no prices, no selling words): those are enforced by validate().
+GUIDE_PATH = Path(__file__).resolve().parent.parent / "docs" / "content-guide.md"
+
+
+def content_guide() -> str:
+    try:
+        return GUIDE_PATH.read_text()
+    except OSError:
+        return ""
+
+
+def system_prompt() -> str:
+    guide = content_guide()
+    if not guide:
+        return SYSTEM_PROMPT
+    return (SYSTEM_PROMPT.replace("Chỉ trả về JSON hợp lệ, không có chữ nào khác.", "").rstrip()
+            + "\n\nHƯỚNG DẪN VIẾT CHI TIẾT CỦA SHOP (theo sát; luật ở trên thắng nếu khác nhau, "
+              "vd không nhắc mùa/thời tiết, không kêu gọi mua):\n\n" + guide
+            + "\n\nChỉ trả về JSON hợp lệ, không có chữ nào khác.")
+
 USER_TEMPLATE = """Sản phẩm (dữ liệu từ {store}):
 {product}
 
@@ -73,10 +95,10 @@ Trả về JSON đúng cấu trúc sau:
     "points": ["2–3 dòng ngắn, mỗi dòng tối đa 36 ký tự, chọn theo kind (xem dưới)"]
   }},
   "captions": [
-    {{"style": "everyday story", "text": "..."}},
-    {{"style": "curiosity hook", "text": "..."}},
-    {{"style": "one-liner", "text": "..."}},
-    {{"style": "product highlights", "text": "..."}}
+    {{"style": "tên chiến lược (A–J hoặc one-liner)", "text": "..."}},
+    {{"style": "...", "text": "..."}},
+    {{"style": "...", "text": "..."}},
+    {{"style": "...", "text": "..."}}
   ]
 }}
 Chữ trên ảnh (labels): lấy từ official_claims, description, features, usage ở trên; không bịa. points theo kind:
@@ -86,13 +108,15 @@ tóc nào, nhu cầu nào, dùng xong tóc thế nào (vd 'Cho tóc nhuộm, kh�
 - hair, ủ tóc / xịt dưỡng / dầu dưỡng / serum: cách dùng ngắn + kết quả (vd 'Thoa lên tóc ẩm, không xả lại').
 - fragrance (nước hoa, body mist): mô tả mùi: hương đầu / hương giữa / hương cuối nếu có, hoặc cảm giác mùi.
 - supplement: công dụng nhà sản xuất công bố + liều dùng (vd '1 viên mỗi ngày').
-Bốn caption phải thật sự khác nhau (sốp đăng xoay vòng cả bốn kiểu):
-- "everyday story": một tình huống đời thường gần gũi dẫn tới sản phẩm, 2–4 câu.
-- "curiosity hook": mở bằng một câu gây tò mò, rồi 1–3 câu giải thích vì sao.
-- "one-liner": ĐÚNG MỘT câu ngắn, hút cực mạnh, tối đa khoảng 15 từ và 1 emoji, không giải thích thêm. \
-Kiểu: "Ơ sao giờ mình mới biết đến em này 😭", "Mọi người biết cái này chưa?", "Sao cái này hay thế mà ít ai \
-biết nhỉ", "Con này đỉnh thật sự luôn á 😮‍💨".
-- "product highlights": nói thẳng 2–3 điểm mạnh nhất của sản phẩm, 2–4 câu.
+Bốn caption phải thật sự khác nhau về Ý TƯỞNG, không chỉ khác chữ (sốp chọn 1 trong 4). Theo hướng dẫn \
+viết của shop (mục 4): chọn 4 chiến lược KHÁC NHAU hợp nhất với sản phẩm này trong A–J, ghi đúng tên vào "style":
+"relatable situation", "curiosity hook", "beauty tip", "honest observation", "playful humor", "discussion starter", \
+"sensory story", "shopping discovery", "soft recommendation", "gift idea", hoặc "one-liner". Đừng lần nào cũng chọn \
+cùng một bộ: mùi hương nổi bật thì có "sensory story"; có mẹo dùng thật thì có "beauty tip"; v.v.
+- Mỗi caption 1–3 câu ngắn. "one-liner" (nếu chọn) là ĐÚNG MỘT câu, tối đa khoảng 15 từ và 1 emoji.
+- Bán ý tưởng, cảm giác, tình huống trước khi bán sản phẩm; có thể không nhắc tên sản phẩm trong caption.
+- Tối đa MỘT caption mở đầu bằng "Bà nào", "Mấy bà ơi", "Tui mới phát hiện", "Em này", "Ai đang tìm" hoặc \
+"Không biết các bà"; không dùng khung "Bà nào bị X thì thử Y, em này có A, B, C".
 Các caption (trừ one-liner) tối đa 450 ký tự (giới hạn của Threads là 500).{extra}"""
 
 NO_REVIEWS_NOTE = (
@@ -163,7 +187,7 @@ def build_messages(product: dict, detail: dict, reviews: list[dict],
         reviews="\n".join(review_lines) or "(không có review)",
         extra=extra,
     )
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
 
 
 def parse_json_reply(text: str) -> dict:
@@ -188,6 +212,11 @@ WEATHER = re.compile(r"thời\s*tiết|hanh\s*khô|se\s*lạnh|nồm|trời\s*(n
 SENSITIVE = re.compile(r"giảm\s*cân|giảm\s*mỡ|đốt\s*(cháy\s*)?mỡ|tan\s*mỡ|giảm\s*béo|weight\s*loss", re.I)
 
 
+# Openings the owner finds overused (docs/content-guide.md §3): at most one caption per draft.
+STALE_OPENING = re.compile(r"\s*(bà\s+nào|mấy\s+bà\s+ơi|tui\s+mới\s+phát\s+hiện|em\s+này|ai\s+đang\s+tìm|"
+                           r"không\s+biết\s+các\s+bà)", re.I)
+
+
 END_EMOJIS = ["🥰", "💖", "🫶", "✨", "😍", "🤍"]
 
 
@@ -209,6 +238,10 @@ def validate(draft: dict) -> list[str]:
     captions = draft.get("captions", [])
     if len(captions) < 3:
         problems.append("fewer than 3 captions")
+    stale = [i for i, c in enumerate(captions, 1) if STALE_OPENING.match(c.get("text", ""))]
+    if len(stale) > 1:
+        problems.append(f"captions {stale} open the same overused way (Bà nào / Mấy bà ơi / Em này…); "
+                        "at most one may, use different hooks")
     for i, c in enumerate(captions, 1):
         text = c.get("text", "")
         if re.search(r"\btiền\b", text, re.I):

@@ -401,14 +401,29 @@ class LlmOutputTest(unittest.TestCase):
         user = llm.build_messages(product("1"), {}, [])[1]["content"]
         self.assertIn("dầu gội / dầu xả / bộ gội + xả: KHÔNG ghi cách dùng", user)
 
-    def test_prompt_asks_for_the_four_rotating_styles_without_sales_talk(self):
+    def test_prompt_asks_for_four_distinct_strategies_without_sales_talk(self):
         msgs = llm.build_messages(product("1"), {}, [])
         system, user = msgs[0]["content"], msgs[1]["content"]
-        for style in ("everyday story", "curiosity hook", "one-liner", "product highlights"):
+        for style in ("relatable situation", "curiosity hook", "beauty tip", "sensory story", "one-liner"):
             self.assertIn(style, user)
+        self.assertNotIn("product highlights", user)
         self.assertNotIn("engagement question", user)
         self.assertNotIn("cọc 50%", system)
         self.assertIn("comment", system)
+
+    def test_owner_writing_guide_is_in_the_system_prompt(self):
+        system = llm.build_messages(product("1"), {}, [])[0]["content"]
+        self.assertIn("STOP REPEATING THE SAME CAPTION STRUCTURE", system)
+        self.assertTrue(system.rstrip().endswith("Chỉ trả về JSON hợp lệ, không có chữ nào khác."))
+        self.assertIn("luật ở trên thắng", system)
+
+    def test_more_than_one_overused_opening_is_refused(self):
+        caps = [{"style": "a", "text": "Bà nào da khô thì thử nha 🥰"},
+                {"style": "b", "text": "Em này thơm lắm luôn 💖"},
+                {"style": "c", "text": "Rửa tay cả chục lần một ngày =)))) 🥹"}]
+        self.assertTrue(any("overused" in p for p in llm.validate({**GOOD_DRAFT, "captions": caps})))
+        caps[1]["text"] = "Mùi hoa trắng ngọt dịu 🌸"
+        self.assertFalse(any("overused" in p for p in llm.validate({**GOOD_DRAFT, "captions": caps})))
 
     def test_weight_loss_words_are_refused(self):
         for text in ["Giúp giảm cân nhanh", "đốt mỡ bụng", "giảm  mỡ hiệu quả", "tan mỡ", "Weight loss"]:
@@ -451,6 +466,7 @@ class DiscordTest(unittest.TestCase):
         card = discord.build_card(7, product("1"), q, GOOD_DRAFT, ["caption 2 has no price"])
         embed = card["embeds"][0]
         self.assertIn("Draft #7", card["content"])
+        self.assertIn("Kiểu ảnh: 🏪 trong cửa hàng", card["content"])
         self.assertIn("1️⃣", embed["description"])
         self.assertLessEqual(len(embed["description"]), 4096)
         self.assertEqual(embed["image"]["url"], "https://img")
@@ -473,7 +489,27 @@ class DiscordTest(unittest.TestCase):
         self.assertEqual(self._decide({"✅": owner, "3️⃣": owner}, ["42"])["caption"], 3)
 
     def test_approve_without_number_defaults_to_first(self):
-        self.assertEqual(self._decide({"✅": [{"id": "42"}]})["caption"], 1)
+        decision = self._decide({"✅": [{"id": "42"}]})
+        self.assertEqual(decision["caption"], 1)
+        self.assertIsNone(decision["style"])
+        self.assertFalse(decision["multiple_styles"])
+
+    def test_multiple_style_taps_follow_the_emoji_order(self):
+        owner = [{"id": "42"}]
+        decision = self._decide({"✅": owner, "🫧": owner, "🎨": owner}, ["42"])
+        self.assertEqual(decision["style"], "k1")
+        self.assertTrue(decision["multiple_styles"])
+
+    def test_reads_style_added_by_owner_on_an_old_card(self):
+        reactions = {"reactions": [{"emoji": {"name": "✅"}, "count": 2, "me": True},
+                                   {"emoji": {"name": "🫧"}, "count": 1, "me": False},
+                                   {"emoji": {"name": "🎨"}, "count": 1, "me": True}]}
+        with mock.patch.object(discord, "_call", return_value=reactions), \
+                mock.patch.object(discord, "reactors", return_value=[{"id": "42"}]) as reactors:
+            decision = discord.read_decision("c", "m", 4, ["42"])
+        self.assertEqual(decision["style"], "k4")
+        self.assertFalse(decision["multiple_styles"])
+        self.assertEqual([c.args[-1] for c in reactors.call_args_list], ["✅", "🫧"])
 
     def test_reject_wins(self):
         owner = [{"id": "42"}]
@@ -600,10 +636,13 @@ class BuildImageTest(unittest.TestCase):
         return gen
 
     def test_build_image_uses_scene(self):
-        from babebasket import cli
+        from babebasket import cli, postimage
 
         payload = dict(IMAGE_PAYLOAD)
-        path = cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(_png((9, 9, 9), (928, 1152))))
+        with mock.patch.object(postimage, "render", wraps=postimage.render) as render:
+            path = cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(_png()))
+        self.assertEqual(self.gen_kwargs["style"], "k0")
+        self.assertEqual(render.call_args.args[1], cli.labels_for(payload))
         self.assertEqual(path, str(self.out))
         self.assertTrue(self.out.exists())
         self.assertEqual((payload["image_path"], payload["image_source"]), (str(self.out), "gemini"))
@@ -616,21 +655,34 @@ class BuildImageTest(unittest.TestCase):
         payload = dict(IMAGE_PAYLOAD)
         cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(),
                         gen=self._gen(_png((9, 9, 9), (928, 1152))), feedback="brighter", previous=b"prev")
-        self.assertEqual(self.gen_kwargs, {"feedback": "brighter", "previous": b"prev"})
+        self.assertEqual(self.gen_kwargs, {"style": "k0", "feedback": "brighter", "previous": b"prev"})
         self.assertTrue(Path(payload["scene_path"]).exists())
         self.assertNotEqual(payload["scene_path"], payload["image_path"])
 
-    def test_build_image_without_fix_passes_no_extras(self):
+    def test_build_image_without_fix_passes_only_style(self):
         from babebasket import cli
 
         cli.build_image(dict(IMAGE_PAYLOAD), self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(None))
-        self.assertEqual(self.gen_kwargs, {})
+        self.assertEqual(self.gen_kwargs, {"style": "k0"})
+
+    def test_build_image_uses_clean_render_for_k1(self):
+        from babebasket import cli, postimage
+
+        payload = dict(IMAGE_PAYLOAD, style="k1")
+        with mock.patch.object(postimage, "render") as render, \
+                mock.patch.object(postimage, "render_clean", wraps=postimage.render_clean) as clean:
+            cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(_png()))
+        self.assertEqual(self.gen_kwargs, {"style": "k1"})
+        render.assert_not_called()
+        clean.assert_called_once()
 
     def test_build_image_fallback_when_scene_none(self):
-        from babebasket import cli
+        from babebasket import cli, postimage
 
-        payload = dict(IMAGE_PAYLOAD)
-        cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(None))
+        payload = dict(IMAGE_PAYLOAD, style="k1")
+        with mock.patch.object(postimage, "render", wraps=postimage.render) as render:
+            cli.build_image(payload, self.out, {}, fetch_bytes=lambda url: _png(), gen=self._gen(None))
+        self.assertEqual(render.call_args.args[1], cli.labels_for(payload))
         self.assertEqual(payload["image_source"], "fallback")
         self.assertTrue(self.out.exists())
 
@@ -706,7 +758,8 @@ class DiscordImageTest(unittest.TestCase):
         kwargs = up.call_args.kwargs
         self.assertEqual(kwargs["files"][0][:2], ("files[0]", "post.jpg"))
         self.assertEqual(json.loads(kwargs["fields"]["payload_json"]), {"content": "x"})
-        self.assertEqual(call.call_count, 4)  # 2 numbers + ✅ + ❌ reactions
+        self.assertEqual([c.args[1].split("/")[-2] for c in call.call_args_list],
+                         [discord._emoji(e) for e in ("1️⃣", "2️⃣", "✅", "❌", "🏪", "🎨", "🤲", "🫧")])
 
 
 class PostResilienceTest(unittest.TestCase):
@@ -811,7 +864,8 @@ class RossmannFlowTest(unittest.TestCase):
         self.assertIn("🟥 ROSSMANN", card["content"])
         with tempfile.TemporaryDirectory() as d:
             payload = {"product": dict(ROSSMANN_PRODUCT), "draft": GOOD_DRAFT}
-            path = cli.build_image(payload, Path(d) / "r.jpg", {}, fetch_bytes=lambda url: _png(), gen=lambda *a: None)
+            path = cli.build_image(payload, Path(d) / "r.jpg", {}, fetch_bytes=lambda url: _png(),
+                                   gen=lambda *args, **kwargs: None)
             self.assertTrue(Path(path).exists())
 
 
