@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS image_calls (
     draft_id INTEGER,
     ok INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_calls (
+    at TEXT NOT NULL, draft_id INTEGER, stage TEXT NOT NULL, model TEXT, generation_id TEXT,
+    prompt_tokens INTEGER, completion_tokens INTEGER, reasoning_tokens INTEGER, cost_usd REAL,
+    images_in INTEGER, ok INTEGER NOT NULL, error TEXT
+);
 """
 
 PRODUCT_COLS = [

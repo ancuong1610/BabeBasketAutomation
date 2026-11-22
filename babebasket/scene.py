@@ -124,8 +124,10 @@ Return only JSON: {"match": true or false, "problems": ["short problem in Vietna
 "match" is false only for differences a customer would notice when the real product arrives."""
 
 
-def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[..., dict], api_key: str | None) -> dict:
+def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[..., dict], api_key: str | None,
+                 stage: str = "vision") -> dict:
     """Ask the text model (it reads images) a question about images; returns parsed JSON."""
+    from babebasket import usage
     from babebasket.llm import parse_json_reply
 
     content = [{"type": "text", "text": prompt}] + [
@@ -134,8 +136,9 @@ def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[...
     reply = post(OPENROUTER_URL, method="POST", timeout=90, retries=1,
                  headers={"Authorization": f"Bearer {api_key or secret('OPENROUTER_API_KEY')}", "X-Title": "babe basket"},
                  body={"model": cfg.get("llm", {}).get("model", "google/gemini-3.8-flash"), "temperature": 0,
-                       "response_format": {"type": "json_object"},
+                       "response_format": {"type": "json_object"}, **usage.REQUEST,
                        "messages": [{"role": "user", "content": content}]})
+    usage.record(stage, reply, images_in=len(images))
     return parse_json_reply(reply["choices"][0]["message"]["content"])
 
 
@@ -143,7 +146,7 @@ def describe_packaging(packshot: bytes, cfg: dict, post: Callable[..., dict] = r
                        api_key: str | None = None) -> str:
     """Concrete packaging facts for the image prompt, e.g. 'opaque iridescent pink bottle'. '' on failure."""
     try:
-        data = _vision_json(DESCRIBE_PROMPT, [packshot], cfg, post, api_key)
+        data = _vision_json(DESCRIBE_PROMPT, [packshot], cfg, post, api_key, stage="packaging")
     except Exception as err:
         print(f"scene: packaging description failed: {err}", file=sys.stderr)
         return ""
@@ -161,7 +164,8 @@ def check_fidelity(packshot: bytes, generated: bytes, cfg: dict, post: Callable[
     If the check itself fails, returns match True with no problems (the owner still reviews the image)."""
     try:
         known = f"\nFacts about the real packaging (trust these over your reading of the first image):\n{facts}" if facts else ""
-        data = _vision_json(CHECK_PROMPT.replace("{facts}", known), [packshot, generated], cfg, post, api_key)
+        data = _vision_json(CHECK_PROMPT.replace("{facts}", known), [packshot, generated], cfg, post, api_key,
+                            stage="fidelity")
     except Exception as err:
         print(f"scene: fidelity check failed: {err}", file=sys.stderr)
         return {"match": True, "problems": [], "checked": False}
@@ -228,7 +232,10 @@ def generate(
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": data_url(packshot)}},
         ]
+    from babebasket import usage
+
     body = {
+        **usage.REQUEST,
         "model": image_cfg.get("model", "google/gemini-3.1-flash-image"),
         "modalities": ["image", "text"],
         "messages": [{"role": "user", "content": content}],
@@ -244,7 +251,10 @@ def generate(
         )
     except Exception as err:  # network, HTTP, JSON: all mean "use the fallback"
         print(f"scene: request failed: {err}", file=sys.stderr)
+        usage.record("image_edit" if feedback else "image", None, model=body["model"], error=str(err),
+                     images_in=len(content) - 1)
         return None
+    usage.record("image_edit" if feedback else "image", reply, model=body["model"], images_in=len(content) - 1)
     image = _image_from_reply(reply or {})
     if image is None:
         text = ((reply or {}).get("choices") or [{}])[0].get("message", {}).get("content", "")

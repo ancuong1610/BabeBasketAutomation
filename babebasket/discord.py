@@ -24,6 +24,7 @@ API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
 EDIT = "✏️"
+TEXT = "🔤"  # change only the words on the image: free, no AI call
 # Owner-only marker: which store the product comes from (never part of the post itself)
 STORE_BADGES = {"dm": "🟦 DM", "rossmann": "🟥 ROSSMANN"}
 STORE_COLORS = {"dm": 0x1F5FAD, "rossmann": 0xC8102E}
@@ -110,7 +111,9 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         }
         embeds.append({k: v for k, v in twin.items() if v})
     card = {
-        "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · bot phản hồi trong khoảng 1 phút",
+        "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · "
+                   "🖼️ ảnh gốc chưa đẹp: **reply** thẻ này kèm ảnh hoặc link ảnh trước khi ✅"
+                   + (" (ghi \"xả\" để thay ảnh dầu xả)" if pair else "") + " · bot phản hồi trong khoảng 1 phút",
         "embeds": embeds,
         "allowed_mentions": {"parse": []},
     }
@@ -150,7 +153,8 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
         edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
     else:
         edit = "✏️ no edits left"
-    content = f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
+    content = (f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit} · "
+               "🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý")
     if note:
         content += f"\n{note}"
     card = {
@@ -172,7 +176,7 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
 
 def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int) -> str:
     message = _send(channel_id, card, image_path)
-    _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []))
+    _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []) + [TEXT])
     return message["id"]
 
 
@@ -211,16 +215,29 @@ def read_decision(channel_id: str, message_id: str, n_captions: int, owners: lis
     return {"status": "approved", "caption": picked[0] if picked else 1, "multiple": len(picked) > 1}
 
 
-def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> str | None:
-    """Image card. None while undecided; else 'reject', 'accept' or 'edit' (in that priority).
+def image_taps(channel_id: str, message_id: str, owners: list[str]) -> set[str]:
+    return owner_taps(channel_id, message_id, [APPROVE, REJECT, EDIT, TEXT], owners)
 
-    'edit' (✏️ tapped) only reminds the owner to reply; the change itself comes from the reply text.
+
+def image_decision(taps: set[str]) -> str | None:
+    """None while undecided; else 'reject', 'accept', 'edit' or 'text' (in that priority).
+
+    'edit' (✏️) and 'text' (🔤) only remind the owner to reply; the change itself comes from the reply text.
     """
-    taps = owner_taps(channel_id, message_id, [APPROVE, REJECT, EDIT], owners)
-    for emoji, decision in ((REJECT, "reject"), (APPROVE, "accept"), (EDIT, "edit")):
+    for emoji, decision in ((REJECT, "reject"), (APPROVE, "accept"), (EDIT, "edit"), (TEXT, "text")):
         if emoji in taps:
             return decision
     return None
+
+
+def read_image_decision(channel_id: str, message_id: str, owners: list[str]) -> str | None:
+    return image_decision(image_taps(channel_id, message_id, owners))
+
+
+def replies_after(channel_id: str, after: str) -> list[dict]:
+    """Messages in the channel newer than id `after`, oldest first (one call, at most 100)."""
+    messages = _call("GET", f"/channels/{channel_id}/messages?after={after}&limit=100") or []
+    return sorted(messages, key=lambda m: int(m["id"]))
 
 
 def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None,

@@ -10,6 +10,7 @@ import json
 import re
 
 from babebasket.config import secret
+from babebasket import usage
 from babebasket.http import request_json
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -291,9 +292,11 @@ def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, atte
                 "messages": messages,
                 "temperature": llm.get("temperature", 0.8),
                 "response_format": {"type": "json_object"},
+                **usage.REQUEST,
             },
             timeout=120,
         )
+        usage.record("caption", reply)
         content = reply["choices"][0]["message"]["content"]
         try:
             draft = parse_json_reply(content)

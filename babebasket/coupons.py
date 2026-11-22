@@ -186,7 +186,7 @@ def extract(images: list[bytes], note: str, cfg: dict, post: Callable[..., dict]
     prompt = EXTRACT_PROMPT.format(today=day.isoformat(), year=day.year, default_store=default_store)
     if note:
         prompt += f"\n\nOwner's note: {note[:1000]}"
-    data = scene._vision_json(prompt, images, cfg, post or request_json, None)
+    data = scene._vision_json(prompt, images, cfg, post or request_json, None, stage="coupon")
     out = []
     for c in data.get("coupons") or []:
         if not isinstance(c, dict):

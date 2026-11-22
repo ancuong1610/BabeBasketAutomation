@@ -70,7 +70,8 @@ class FlowTest(unittest.TestCase):
     def decide(self, decision, feedback="", last_id=None, unreadable=False, cfg=CFG):
         notes = {"text": feedback, "last_id": last_id or ("R1" if feedback or unreadable else None),
                  "unreadable": unreadable}
-        with mock.patch.object(discord, "read_image_decision", return_value=decision), \
+        taps = {"reject": {"❌"}, "accept": {"✅"}, "edit": {"✏️"}, "text": {"🔤"}}.get(decision, set())
+        with mock.patch.object(discord, "image_taps", return_value=taps), \
                 mock.patch.object(discord, "read_image_feedback", return_value=notes) as fb:
             cli.cmd_check_images(cfg, self.conn)
         return fb
@@ -331,9 +332,9 @@ class ImageDecisionTest(unittest.TestCase):
         with mock.patch.object(discord, "_send", return_value={"id": "M"}), \
                 mock.patch.object(discord, "_react") as react:
             discord.post_image_card("CH", {}, "x.jpg", edits_left=1)
-            self.assertEqual(react.call_args.args[2], ["✅", "❌", "✏️"])
+            self.assertEqual(react.call_args.args[2], ["✅", "❌", "✏️", "🔤"])
             discord.post_image_card("CH", {}, "x.jpg", edits_left=0)
-            self.assertEqual(react.call_args.args[2], ["✅", "❌"])
+            self.assertEqual(react.call_args.args[2], ["✅", "❌", "🔤"])
 
 if __name__ == "__main__":
     unittest.main()

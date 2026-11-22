@@ -27,6 +27,9 @@ Two steps per post, so no paid AI image is made for a post you reject.
 
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
 - ✅ to approve, ❌ to reject
+- 🖼️ the store photo is not good: **reply to the caption card** with a photo (or a link to one)
+  before ✅. The AI image is then made from that photo; for a shampoo + conditioner pair write
+  "xả" in the reply to replace the conditioner's photo. Free; the original link is kept.
 
 **2. Image card**, sent as a reply under the caption card on the next `check` (≤1 min):
 
@@ -36,6 +39,9 @@ Two steps per post, so no paid AI image is made for a post you reject.
   ("sản phẩm to hơn, nền sáng hơn", "hand from the left", "less blur"). The AI edits *that*
   image as asked and keeps the packaging identical to the store photo, then sends a new card.
   Tapping ✏️ without replying just gets a reminder to reply. A reply wins over ✅.
+- 🔤 **new words only** (free, no AI): tap 🔤 and reply with the text. First line = title,
+  next lines = the points (up to 3); one line changes only the title. The same scene is
+  lettered again and sent as a new card.
 
 Replies need the bot's **Message Content Intent** switched on (Discord Developer Portal →
 your app → Bot → Privileged Gateway Intents). Without it the bot says so under the card.
@@ -94,9 +100,12 @@ Made only after the caption is approved (step 2 above), as one finished image (1
 3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
 
 Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
-(default 3: the first image + two ✏️ edits) and `max_per_day` (default 6) cap the paid requests; past a cap
-the plain background is used and the card says so. Every paid request is logged in the
-`image_calls` table. `enabled = false` turns AI images off entirely.
+(default 3: the first image + two ✏️ edits) and `max_per_day` (default 30) cap the paid image requests; past a
+cap the plain background is used and the card says so. `enabled = false` turns AI images off entirely.
+
+Every OpenRouter call (caption, packaging, image, image_edit, fidelity, coupon) is stored in the
+`ai_calls` table with its draft, tokens and the cost OpenRouter reports. See it with
+`python3 -m babebasket costs` (last 7 days; `--days 30` for more).
 
 Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
 Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.

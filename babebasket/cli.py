@@ -17,11 +17,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
 
-from babebasket import config, db, llm, pricing, shortlist
+from babebasket import config, db, llm, pricing, shortlist, usage
 from babebasket.config import DATA
 from babebasket.stores import dm, rossmann
 
@@ -116,6 +117,47 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
+def labels_for(payload: dict) -> dict:
+    """The words on the post image: the draft's labels, or the owner's own text sent with 🔤."""
+    labels = llm.image_labels(payload["draft"])
+    return {**labels, **payload.get("labels_override", {})}
+
+
+def labels_from_reply(text: str, current: dict) -> dict:
+    """🔤 reply: first line is the title, the next lines (up to 3) the points; one line changes only the title."""
+    lines = [re.sub(r"^\s*[•▫️\-–—*·]+\s*", "", l).strip() for l in re.split(r"\n| / ", text)]
+    lines = [l for l in lines if l]
+    if not lines:
+        return {}
+    out = {"title": lines[0][:80]}
+    if len(lines) > 1:
+        out["points"] = [l[:80] for l in lines[1:4]]
+    return out
+
+
+def reletter(payload: dict, out, fetch_bytes=None) -> str | None:
+    """Put the (new) words on the image's existing scene again. Free: no AI call."""
+    import io
+
+    from PIL import Image
+
+    from babebasket import postimage
+
+    scene_path = payload.get("scene_path")
+    if scene_path and Path(scene_path).exists():
+        base = Image.open(scene_path)
+    else:  # plain-background image: rebuild it from the packshot
+        fetch = fetch_bytes or globals()["fetch_bytes"]
+        product = payload["product"]
+        packshot = fetch(product["image_url"])
+        if (product.get("pair") or {}).get("image_url"):
+            packshot = postimage.side_by_side(packshot, fetch(product["pair"]["image_url"]))
+        base = postimage.fallback_scene(packshot)
+    path = postimage.save(postimage.render(base, labels_for(payload)), out)
+    payload["image_path"] = str(path)
+    return str(path)
+
+
 def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None, ai: bool = True,
                 feedback: str = "", previous: bytes | None = None, describe=None, check=None) -> str | None:
     """Render the post image for a draft payload. Returns the file path, or None if there is no packshot.
@@ -145,7 +187,7 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
     except Exception as err:
         print(f"! packshot download failed for {product['product_id']}: {err}", file=sys.stderr)
         return None
-    labels = llm.image_labels(payload["draft"])
+    labels = labels_for(payload)
     source, base = "fallback", None
     facts = ""
     if ai and describe:  # e.g. "opaque iridescent pink bottle": stops the model inventing clear plastic
@@ -181,13 +223,15 @@ def cmd_draft(cfg: dict, conn, limit: int | None) -> None:
         try:
             payload = make_draft(product, cfg)
         except Exception as err:
+            usage.flush(conn, None)
             print(f"! {product['brand']} {product['name'][:40]}: {err}", file=sys.stderr)
             continue
         # No image yet: the post image is made only after the caption is approved (see cmd_images).
         draft_id = db.add_draft(conn, product["store"], product["product_id"], payload)
-        usage = payload["draft"].get("_usage", {})
+        usage.flush(conn, draft_id)
+        tokens = payload["draft"].get("_usage", {})
         print(f"draft #{draft_id}: {product['brand']} · {product['name'][:50]}  "
-              f"({usage.get('total_tokens', '?')} tokens)")
+              f"({tokens.get('total_tokens', '?')} tokens)")
 
 
 def cmd_post(cfg: dict, conn) -> None:
@@ -225,6 +269,94 @@ def cmd_post(cfg: dict, conn) -> None:
     if failed:  # make the run fail (n8n shows it red, run.sh alerts) instead of failing silently
         raise RuntimeError(f"{len(failed)} card(s) not sent (drafts {', '.join(f'#{i}' for i in failed)}); "
                            "they stay drafted: fix the cause (e.g. DISCORD_BOT_TOKEN in .env), then run: post")
+
+
+MAX_SOURCE_BYTES = 15 * 1024 * 1024
+MIN_SOURCE_SIDE = 300
+IMAGE_EXT = re.compile(r"\.(jpe?g|png|webp)(\?|$)", re.I)
+
+
+def source_url(message: dict) -> str | None:
+    """The image the owner sent: an attached picture, else the first link in the text."""
+    for att in message.get("attachments") or []:
+        if (att.get("content_type") or "").startswith("image/") or IMAGE_EXT.search(att.get("filename") or ""):
+            return att.get("url")
+    link = re.search(r"https?://\S+", message.get("content") or "")
+    return link.group(0).rstrip(">)") if link else None
+
+
+def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) -> str:
+    """Swap the product photo the AI image will be made from. Returns which bottle changed ('' for a single product).
+
+    The photo must be a real image of at least 300 px; it is stored under data/sources/ and the
+    original link is kept in `source_original`. Product, caption and price stay as they are.
+    """
+    import io
+
+    from PIL import Image
+
+    data = (fetch or fetch_bytes)(url)
+    if len(data) > MAX_SOURCE_BYTES:
+        raise ValueError("ảnh lớn hơn 15 MB")
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        raise ValueError("không phải file ảnh") from None
+    if min(img.size) < MIN_SOURCE_SIDE:
+        raise ValueError(f"ảnh quá nhỏ ({img.width}×{img.height}, cần tối thiểu {MIN_SOURCE_SIDE} px)")
+    row = conn.execute("SELECT payload FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+    payload = json.loads(row["payload"])
+    product = payload["product"]
+    to_pair = bool(product.get("pair")) and re.search(r"xả|conditioner|spülung", text, re.I) is not None
+    target = product["pair"] if to_pair else product
+    out = DATA / "sources" / f"draft-{draft_id}-{'pair' if to_pair else 'main'}-{int(time.time())}.jpg"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out, "JPEG", quality=92)
+    target.setdefault("source_original", target.get("image_url"))
+    target["image_url"] = out.resolve().as_uri()
+    target["source_replaced_from"] = url.split("?")[0]
+    payload.pop("packaging_facts", None)  # facts described the old photo
+    db.set_payload(conn, draft_id, payload)
+    return ("dầu xả" if to_pair else "dầu gội") if product.get("pair") else ""
+
+
+def cmd_source_replies(cfg: dict, conn) -> None:
+    """🖼️ The owner replied to a caption card with a photo or a photo link: use it as the product photo.
+
+    Runs before the ✅ is read, so an image is never made from the old photo once a new one was sent.
+    One Discord call per run for all waiting cards.
+    """
+    from babebasket import coupons, discord
+
+    channel = cfg["discord"]["channel_id"]
+    owners = {str(o) for o in cfg["discord"].get("owner_user_ids", [])}
+    cards = {r["discord_message_id"]: r["id"] for r in db.drafts(conn, "pending") if r["discord_message_id"]}
+    if not cards:
+        return
+    seen = coupons._kv(conn, "source_replies_seen") or "0"
+    numeric = [int(m) for m in cards if str(m).isdigit()]
+    after = str(max(int(seen), min(numeric) - 1 if numeric else 0))
+    for m in discord.replies_after(channel, after):
+        after = m["id"]
+        card = (m.get("message_reference") or {}).get("message_id")
+        author = m.get("author") or {}
+        if card not in cards or author.get("bot") or (owners and str(author.get("id")) not in owners):
+            continue
+        url = source_url(m)
+        if not url:
+            continue
+        draft_id = cards[card]
+        try:
+            which = replace_source(conn, draft_id, url, m.get("content") or "")
+            discord.reply(channel, card, f"🖼️ Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
+                                         "Bấm ✅ khi sẵn sàng: ảnh AI sẽ dùng ảnh mới.")
+            print(f"draft #{draft_id}: source photo replaced")
+        except Exception as err:
+            discord.reply(channel, card, f"⚠️ Không dùng được ảnh này: {str(err)[:150]}. "
+                                         "Gửi ảnh JPG/PNG khác hoặc link trực tiếp tới ảnh.")
+            print(f"! draft #{draft_id}: source photo not usable: {err}", file=sys.stderr)
+    coupons._kv(conn, "source_replies_seen", after)
 
 
 def cmd_check(cfg: dict, conn) -> None:
@@ -266,6 +398,7 @@ def run_coupons(cfg: dict, conn) -> None:
         coupons.process_channel(cfg, conn)
     except Exception as err:
         print(f"! coupons: {err}", file=sys.stderr)
+    usage.flush(conn, None)
 
 
 def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
@@ -278,10 +411,12 @@ def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
     return max(0, min(per_post, per_day))
 
 
-def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "", feedback: str = "") -> None:
+def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "", feedback: str = "",
+                    text: str = "") -> None:
     """Make the post image (AI if allowed, else plain) and send it to Discord for approval.
 
     With `feedback`, the previous AI scene (if any) is edited as asked instead of starting over.
+    With `text` (🔤), only the words on the image change: the same scene is lettered again, no AI call.
     """
     from babebasket import discord
 
@@ -299,9 +434,15 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     version = payload.get("image_versions", 0) + 1
     old_ai_image = payload.get("image_path") if payload.get("image_source") == "gemini" else None
     unposted = payload.get("unposted_image") or {}
-    if unposted.get("path") and Path(unposted["path"]).exists() and unposted.get("feedback", "") == feedback:
+    if (unposted.get("path") and Path(unposted["path"]).exists() and unposted.get("feedback", "") == feedback
+            and unposted.get("text", "") == text):
         # Made and paid for on an earlier run whose Discord card failed: send that image, do not make a new one.
         path, version, use_ai, notes = unposted["path"], unposted["version"], False, unposted.get("notes", notes)
+    elif text:
+        payload["labels_override"] = labels_from_reply(text, labels_for(payload))
+        path = reletter(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg")
+        use_ai = False
+        notes.insert(0, "🔤 Đã đổi chữ trên ảnh (không dùng AI, không tốn phí).")
     elif ai and not feedback and version == 1 and old_ai_image and Path(old_ai_image).exists():
         # Drafted under the old flow, which already paid for an AI image: show that one first.
         payload["image_versions"] = version
@@ -313,6 +454,7 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
             previous = Path(scene_path).read_bytes()
         path = build_image(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg", cfg, ai=use_ai,
                            feedback=feedback if use_ai else "", previous=previous)
+        usage.flush(conn, draft_id)
         if feedback and use_ai:
             notes.insert(0, f"✏️ {'Edited' if previous else 'New image'} with your note: “{feedback[:300]}”")
     if path is None:  # photo download failed: nothing was paid for; stay put and retry on the next check
@@ -329,7 +471,8 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
             notes.append("⚠️ Có thể khác bao bì thật: " + "; ".join(fidelity.get("problems", []))
                          + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
         # Saved before the Discord card goes out: if posting fails, the next run resends this image.
-        payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "notes": notes}
+        payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "text": text,
+                                     "notes": notes}
         db.set_payload(conn, draft_id, payload)
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
@@ -371,7 +514,8 @@ def cmd_check_images(cfg: dict, conn) -> None:
             if unposted:  # an edited image was made but its card failed to post: send it now
                 send_image_card(cfg, conn, row, payload, ai=True, feedback=unposted.get("feedback", ""))
                 continue
-            decision = discord.read_image_decision(channel, message_id, owners)
+            taps = discord.image_taps(channel, message_id, owners)
+            decision = discord.image_decision(taps)
             # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
             notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),
                                                 accept_plain=len(waiting) == 1)
@@ -387,6 +531,9 @@ def cmd_check_images(cfg: dict, conn) -> None:
             if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
                 discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+            elif feedback and discord.TEXT in taps:  # 🔤 + reply: new words on the same scene, no AI call
+                decision = "text"
+                send_image_card(cfg, conn, row, payload, ai=False, text=feedback)
             elif feedback:  # a written edit wins over ✅: make the image again as asked
                 if ai_tries_left(cfg, conn, row["id"]) > 0:
                     decision = "edit"
@@ -405,6 +552,11 @@ def cmd_check_images(cfg: dict, conn) -> None:
                 db.set_payload(conn, row["id"], payload)
                 discord.reply(channel, message_id,
                               "✏️ Reply to the image card with what to change, e.g. \"sản phẩm to hơn, nền sáng hơn\".")
+            elif decision == "text" and payload.get("edit_hint_for") != message_id:  # 🔤 tapped, no reply yet
+                payload["edit_hint_for"] = message_id
+                db.set_payload(conn, row["id"], payload)
+                discord.reply(channel, message_id, "🔤 Reply thẻ ảnh bằng chữ mới: dòng 1 là tiêu đề, các dòng sau "
+                                                   "là các ý (tối đa 3). Chỉ 1 dòng thì chỉ đổi tiêu đề.")
             else:
                 continue
         except Exception as err:
@@ -527,6 +679,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("post")
     sub.add_parser("check")
     sub.add_parser("publish")
+    cs = sub.add_parser("costs", help="what OpenRouter calls cost, per stage and draft")
+    cs.add_argument("--days", type=int, default=7)
     dl = sub.add_parser("daily")
     dl.add_argument("--store", choices=["dm", "rossmann"], help="scrape only this store")
     nt = sub.add_parser("notify", help="post a message to the approval channel")
@@ -560,12 +714,18 @@ def main(argv: list[str] | None = None) -> int:
         cmd_post(cfg, conn)
     elif args.cmd == "check":
         run_coupons(cfg, conn)        # new screenshots/notes in #coupons
+        try:
+            cmd_source_replies(cfg, conn)  # 🖼️ new product photos sent as replies to caption cards
+        except Exception as err:
+            print(f"! source photos: {err}", file=sys.stderr)
         cmd_check(cfg, conn)          # caption cards
         cmd_check_images(cfg, conn)   # image cards
         cmd_images(cfg, conn)         # make images for newly approved captions
         cmd_publish(cfg, conn)
     elif args.cmd == "publish":
         cmd_publish(cfg, conn)
+    elif args.cmd == "costs":
+        print(usage.report(conn, args.days))
     elif args.cmd == "daily":
         run_coupons(cfg, conn)
         cmd_scrape(cfg, conn, stores)
