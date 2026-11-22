@@ -90,8 +90,42 @@ def enrich(product: dict) -> tuple[dict, list[dict]]:
         reviews = dm.fetch_reviews(product["product_id"])
         if detail.get("images"):
             product["image_url"] = detail["images"][0]
+        if detail.get("gallery"):
+            product["gallery"] = clean_gallery(detail["gallery"])
         return detail, reviews
     return {"claims": [], "breadcrumbs": [], "description": ""}, []
+
+
+MAX_GALLERY = 8
+SAME_PHOTO_BITS = 5  # dHash distance at or below which two photos count as the same
+
+
+def clean_gallery(items: list[dict], fetch=None) -> list[str]:
+    """The product page's photos without repeats: same link, near-identical picture, or photos dm marks as AI-made.
+
+    Only the small thumbnails are downloaded for the comparison. Order is kept (first = store packshot).
+    """
+    from babebasket import postimage
+
+    fetch = fetch or fetch_bytes
+    kept, hashes, seen = [], [], set()
+    for item in items:
+        url = item.get("url")
+        if not url or url in seen or item.get("ai"):
+            continue
+        seen.add(url)
+        try:
+            h = postimage.dhash(fetch(item.get("thumb") or url))
+        except Exception:  # thumbnail not readable: keep the photo, it just is not compared
+            h = None
+        if h is not None and any(bin(h ^ o).count("1") <= SAME_PHOTO_BITS for o in hashes):
+            continue
+        if h is not None:
+            hashes.append(h)
+        kept.append(url)
+        if len(kept) >= MAX_GALLERY:
+            break
+    return kept
 
 
 def make_draft(product: dict, cfg: dict) -> dict:
@@ -285,6 +319,19 @@ def source_url(message: dict) -> str | None:
     return link.group(0).rstrip(">)") if link else None
 
 
+def gallery_pick(conn, draft_id: int, text: str) -> str | None:
+    """'ảnh 3' (or 'xả ảnh 2' for a pair's conditioner): that photo from the product page's gallery."""
+    pick = re.search(r"ảnh\s*(?:số\s*)?(\d+)", text, re.I)
+    if not pick:
+        return None
+    product = json.loads(conn.execute("SELECT payload FROM drafts WHERE id = ?", (draft_id,)).fetchone()[0])["product"]
+    if product.get("pair") and re.search(r"xả|conditioner|spülung", text, re.I):
+        product = product["pair"]
+    gallery = product.get("gallery") or []
+    n = int(pick.group(1))
+    return gallery[n - 1] if 1 <= n <= len(gallery) else None
+
+
 def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) -> str:
     """Swap the product photo the AI image will be made from. Returns which bottle changed ('' for a single product).
 
@@ -343,10 +390,10 @@ def cmd_source_replies(cfg: dict, conn) -> None:
         author = m.get("author") or {}
         if card not in cards or author.get("bot") or (owners and str(author.get("id")) not in owners):
             continue
-        url = source_url(m)
+        draft_id = cards[card]
+        url = source_url(m) or gallery_pick(conn, draft_id, m.get("content") or "")
         if not url:
             continue
-        draft_id = cards[card]
         try:
             which = replace_source(conn, draft_id, url, m.get("content") or "")
             discord.reply(channel, card, f"🖼️ Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "

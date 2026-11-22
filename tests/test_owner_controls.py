@@ -174,5 +174,52 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(sent["usage"], {"include": True})
 
 
+class GalleryTest(unittest.TestCase):
+    def test_parse_detail_keeps_every_photo(self):
+        from babebasket.stores import dm
+
+        detail = dm.parse_detail(json.loads(Path("tests/fixtures/dm_detail.json").read_text()))
+        self.assertEqual(len(detail["gallery"]), 2)
+        self.assertTrue(detail["gallery"][0]["thumb"].startswith("https://products.dm-static.com/"))
+        self.assertEqual(detail["gallery"][0]["url"], detail["images"][0])
+
+    def test_clean_gallery_drops_repeats_and_ai_photos(self):
+        def noisy(color, shift=0):
+            img = Image.new("RGB", (120, 120), "white")
+            img.paste(color, (10 + shift, 10, 70 + shift, 110))
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return buf.getvalue()
+
+        thumbs = {"t1": noisy("red"), "t2": noisy("red", 1), "t3": noisy("blue", 40), "t4": noisy("green", 20)}
+        items = [{"url": "u1", "thumb": "t1"}, {"url": "u1", "thumb": "t1"},          # same link
+                 {"url": "u2", "thumb": "t2"},                                         # same picture, re-cropped
+                 {"url": "u3", "thumb": "t3"}, {"url": "u4", "thumb": "t4", "ai": True},
+                 {"url": "u5", "thumb": "broken"}]
+        kept = cli.clean_gallery(items, fetch=lambda u: thumbs.get(u, b"not an image"))
+        self.assertEqual(kept, ["u1", "u3", "u5"])
+
+    def test_caption_card_shows_the_gallery_as_a_grid(self):
+        product = {"store": "dm", "product_id": "1", "brand": "B", "name": "Lip Gloss", "image_url": "g1",
+                   "product_url": "https://dm/p/1", "gallery": ["g1", "g2", "g3", "g4", "g5"]}
+        quote = {"shelf_eur": 5.0, "coupon_pct": 0, "cost_eur": 5.0}
+        card = discord.build_card(1, product, quote, {"captions": []}, [])
+        images = [e["image"]["url"] for e in card["embeds"]]
+        self.assertEqual(images, ["g1", "g2", "g3", "g4"])
+        self.assertTrue(all(e["url"] == "https://dm/p/1" for e in card["embeds"]))
+
+    def test_reply_anh_2_picks_that_gallery_photo(self):
+        conn = db.connect(":memory:")
+        draft_id = pending_draft(conn, pair=True)
+        payload = json.loads(conn.execute("SELECT payload FROM drafts").fetchone()[0])
+        payload["product"]["gallery"] = ["s-1", "s-2"]
+        payload["product"]["pair"]["gallery"] = ["c-1", "c-2", "c-3"]
+        db.set_payload(conn, draft_id, payload)
+        self.assertEqual(cli.gallery_pick(conn, draft_id, "dùng ảnh 2 nha"), "s-2")
+        self.assertEqual(cli.gallery_pick(conn, draft_id, "xả ảnh số 3"), "c-3")
+        self.assertIsNone(cli.gallery_pick(conn, draft_id, "ảnh 9"))
+        self.assertIsNone(cli.gallery_pick(conn, draft_id, "đẹp đó"))
+
+
 if __name__ == "__main__":
     unittest.main()

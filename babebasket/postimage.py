@@ -58,6 +58,14 @@ def _wrap(text: str, f: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     return lines
 
 
+def dhash(data: bytes) -> int:
+    """64-bit difference hash: near-identical photos (re-crops, re-encodes) get hashes a few bits apart."""
+    img = Image.open(io.BytesIO(data)).convert("L").resize((9, 8), Image.LANCZOS)
+    px = list(img.getdata())
+    return sum(1 << i for i, (a, b) in enumerate((px[r * 9 + c], px[r * 9 + c + 1])
+                                                  for r in range(8) for c in range(8)) if a > b)
+
+
 def wrap_balanced(text: str, f: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     """Same number of lines as a greedy wrap, but with the widest line as narrow as possible
     (no lonely last word under a long first line)."""

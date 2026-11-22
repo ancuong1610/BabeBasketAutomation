@@ -132,6 +132,10 @@ def parse_detail(data: dict) -> dict:
         "breadcrumbs": data.get("breadcrumbs", []),
         "price_note": (price.get("notIncreasedSince") or {}).get("text", ""),
         "images": [img.get("zoomSrc") for img in data.get("images", []) if img.get("zoomSrc")],
+        # every photo of the product page, in dm's order (small thumbnail for duplicate checks)
+        "gallery": [{"url": img["zoomSrc"], "thumb": img.get("thumbnailSrc") or img.get("src") or img["zoomSrc"],
+                     "alt": img.get("alt") or "", "ai": bool(img.get("isAiGenerated"))}
+                    for img in data.get("images", []) if img.get("zoomSrc")],
     }
 
 

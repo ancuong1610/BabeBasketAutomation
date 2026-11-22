@@ -51,6 +51,18 @@ def rating_text(product: dict) -> str:
     return f"⭐ {product['rating']:.2f} · {product['review_count']} reviews"
 
 
+GALLERY_ON_CARD = 4  # Discord shows up to 4 photos of embeds that share one link as a grid
+
+
+def gallery_embeds(product: dict, skip_first: bool = True) -> list[dict]:
+    """Extra photos of the product page for the card's grid (the first is already the main image)."""
+    url = product.get("product_url")
+    photos = (product.get("gallery") or [])[1 if skip_first else 0:]
+    if not url:
+        return []
+    return [{"url": url, "image": {"url": p}} for p in photos[:GALLERY_ON_CARD - 1]]
+
+
 def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str],
                has_image: bool = False) -> dict:
     labels = image_labels(draft)
@@ -98,7 +110,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         "footer": {"text": f"draft {draft_id} · {draft.get('_model', '')}"},
         "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
     }
-    embeds = [{k: v for k, v in embed.items() if v}]
+    embeds = [{k: v for k, v in embed.items() if v}] + gallery_embeds(product, skip_first=not has_image)
     if pair:  # the twin gets its own embed: own link and own photo, so both can be checked before ✅
         twin = {
             "title": f"🧴 Xả · {pair.get('brand') or product['brand']} · {pair.get('name', '')}"[:256],
@@ -110,9 +122,10 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
             "color": STORE_COLORS.get(product["store"], 0xF6E7A1),
         }
         embeds.append({k: v for k, v in twin.items() if v})
+        embeds += gallery_embeds(pair)
     card = {
         "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · "
-                   "🖼️ ảnh gốc chưa đẹp: **reply** thẻ này kèm ảnh hoặc link ảnh trước khi ✅"
+                   "🖼️ ảnh gốc chưa đẹp: **reply** thẻ này kèm ảnh, link ảnh, hoặc \"ảnh 2\" (ảnh thứ 2 của shop) trước khi ✅"
                    + (" (ghi \"xả\" để thay ảnh dầu xả)" if pair else "") + " · bot phản hồi trong khoảng 1 phút",
         "embeds": embeds,
         "allowed_mentions": {"parse": []},

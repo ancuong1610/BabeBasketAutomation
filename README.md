@@ -30,6 +30,8 @@ Two steps per post, so no paid AI image is made for a post you reject.
 - 🖼️ the store photo is not good: **reply to the caption card** with a photo (or a link to one)
   before ✅. The AI image is then made from that photo; for a shampoo + conditioner pair write
   "xả" in the reply to replace the conditioner's photo. Free; the original link is kept.
+  The card shows up to 4 photos of the dm product page (repeats and photos dm marks as AI-made
+  are dropped); reply "ảnh 2" (or "xả ảnh 2") to use one of them instead.
 
 **2. Image card**, sent as a reply under the caption card on the next `check` (≤1 min):
 
