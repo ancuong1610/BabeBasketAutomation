@@ -98,7 +98,7 @@ graph_version = "v21.0"
 enabled = false
 
 [instagram]
-# Set META_PAGE_ACCESS_TOKEN and INSTAGRAM_USER_ID in .env before enabling.
+# Set INSTAGRAM_ACCESS_TOKEN (Instagram Login) or META_PAGE_ACCESS_TOKEN, plus INSTAGRAM_USER_ID, in .env first.
 enabled = false
 
 [image]
