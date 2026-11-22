@@ -44,6 +44,7 @@ offer_pages = [
 
 [shortlist]
 per_day = 11             # posts drafted per day (the [groups] quotas add up to this)
+refill_max_per_day = 10  # every ❌ today gets a replacement draft (same group first), at most this many a day
 min_rating = 4.0         # hair and body: 3.9★ and below is never sold; [groups.extra] is stricter
 min_reviews = 10         # few reviews rank lower anyway (score weighs the number of reviews)
 coupon_weight = 2.0      # a valid coupon for a product/brand boosts it: 20 % -> score x1.4 (see #coupons)
@@ -57,12 +58,18 @@ repeat_after_days = 45   # don't redraft a product sooner than this
 preferred_brands = ["Balea", "Garnier", "L'ORÉAL", "Elvital", "NIVEA", "Dove", "Doppelherz", "ISANA", "Jean&Len", "Tesori d'Oriente", "KIKO"]
 
 [pricing]
-# Simple placeholder rule; edit later.
-# sale price (VND) = (shelf price x (1 - coupon) x vnd_per_eur + shipping_vnd_per_item) x (1 + markup)
-vnd_per_eur = 30000
-shipping_vnd_per_item = 0
-markup = 0.35
-round_to_thousand = 5    # round the 🐠 price up to a multiple of this
+# Same formulas as the shop's price sheet ("Bảng tính giá hàng order Đức"); see babebasket/pricing.py.
+# Shown on the Discord card only (captions never carry a price).
+vnd_per_eur = 30000        # Tỷ giá EUR/VND
+fx_buffer = 0.03           # Dự phòng tỷ giá -> 30,900 per EUR
+cargo_vnd_per_kg = 210000  # Phí cargo (weight estimated from the pack size in the product name)
+packaging_vnd = 5000       # Bao bì/SP
+risk = 0.05                # Dự phòng rủi ro/hư hỏng
+sales_fee = 0.05           # Phí bán hàng
+target_margin = 0.30       # Biên lợi nhuận mục tiêu (on the sale price)
+round_vnd = 1000           # Làm tròn giá (up)
+ctv_share = 0.95           # Giá CTV = 95 % of the suggested price
+deposit = 0.50             # Tiền cọc
 
 [coupons]
 # Standing coupon assumed per store, in percent.

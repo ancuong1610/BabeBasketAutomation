@@ -66,7 +66,13 @@ def eligible(product: dict, cfg: dict) -> tuple[str | None, str]:
 
 
 def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
-         check: Callable[[dict], tuple[bool, str]] | None = None) -> list[dict]:
+         check: Callable[[dict], tuple[bool, str]] | None = None,
+         only_group: str | None = None, today: list[dict] | None = None) -> list[dict]:
+    """Today's products. With `only_group`, a refill: up to `limit` replacements, that group first.
+
+    `today`: products already drafted today (alone or as a pair), so a refill keeps the
+    2-per-brand and one-shade-per-product rules for the whole day.
+    """
     sc = cfg["shortlist"]
     groups = cfg.get("groups") or DEFAULT_GROUPS
     check = check or catalog.make_safety_checker(conn)
@@ -115,6 +121,13 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
     per_brand: dict[str, int] = {}
     used: set[tuple[str, str]] = set()   # products already in today's list, alone or as half of a pair
     variants: set[str] = set()           # one shade/scent per product per day
+    for p in today or []:
+        brand = (p.get("brand") or "").split()[0].lower() if p.get("brand") else ""
+        per_brand[brand] = per_brand.get(brand, 0) + 1
+        variants.add(variant_key(p))
+        used.add((p.get("store"), p.get("product_id")))
+        if p.get("pair"):
+            used.add((p["pair"].get("store"), p["pair"].get("product_id")))
 
     def with_partner(item: dict) -> tuple[dict | None, str]:
         """Shampoo and conditioner go out as a matching pair. Only a product that has NO twin of its
@@ -171,11 +184,15 @@ def pick(conn: sqlite3.Connection, cfg: dict, limit: int | None = None,
                 used.add((post["pair"]["store"], post["pair"]["product_id"]))
             taken += 1
 
+    leftovers = sorted((i for items in ranked.values() for i in items), key=lambda x: x["score"], reverse=True)
+    if only_group is not None:                    # refill after a ❌: same group first, else the best of the rest
+        take(ranked.get(only_group, []), total)
+        take(leftovers, total)
+        return out
     fresh.sort(key=lambda x: x["score"], reverse=True)
     take(fresh, sc.get("new_per_day", 1))         # the new-product pick (if a trusted brand has one) ...
     for group, rules in groups.items():           # ... each group's own quota (a new pick uses its group's slot) ...
         already = sum(1 for p in out if p.get("group") == group)
         take(ranked.get(group, []), max(0, rules.get("per_day", 0) - already))
-    leftovers = sorted((i for items in ranked.values() for i in items), key=lambda x: x["score"], reverse=True)
     take(leftovers, total)                        # ... then fill any gap with the best of the rest
     return out

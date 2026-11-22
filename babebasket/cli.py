@@ -137,7 +137,10 @@ def make_draft(product: dict, cfg: dict) -> dict:
         reviews = reviews[:8] + pair_reviews[:6]
         price = round(price + (pair.get("price_eur") or 0), 2)
     coupon = product.get("coupon") or {}
-    quote = pricing.quote(price, product["store"], cfg, None if coupon.get("in_price") else coupon.get("percent"))
+    weight = pricing.estimate_weight(product["name"])[0] + (pricing.estimate_weight(pair["name"])[0] if pair else 0)
+    quote = pricing.quote(price, product["store"], cfg, None if coupon.get("in_price") else coupon.get("percent"),
+                          weight_g=weight)
+    quote["weight_estimated"] = True
     draft = llm.draft_post(product, detail, reviews, cfg, pair=pair, pair_detail=pair_detail)
     warnings = llm.warnings(draft, had_reviews=bool(reviews))
     return {"product": product, "detail": detail, "quote": quote, "draft": draft, "warnings": warnings}
@@ -277,6 +280,61 @@ def cmd_draft(cfg: dict, conn, limit: int | None) -> None:
         tokens = payload["draft"].get("_usage", {})
         print(f"draft #{draft_id}: {product['brand']} · {product['name'][:50]}  "
               f"({tokens.get('total_tokens', '?')} tokens)")
+
+
+def berlin_midnight_utc() -> str:
+    """Start of today in Berlin, as the UTC timestamp format drafts.created_at uses."""
+    from zoneinfo import ZoneInfo
+
+    local = dt.datetime.now(ZoneInfo("Europe/Berlin")).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def cmd_refill(cfg: dict, conn) -> list[int]:
+    """Keep today's list at [shortlist] per_day: every ❌ (caption or image) gets a replacement draft.
+
+    Only once today's daily run has drafted something; the same group is refilled first.
+    At most [shortlist] refill_max_per_day replacements a day (each costs one caption call).
+    Returns the new draft ids; their cards go out with the next `post`.
+    """
+    sc = cfg["shortlist"]
+    rows = conn.execute("SELECT id, status, payload FROM drafts WHERE created_at >= ?",
+                        (berlin_midnight_utc(),)).fetchall()
+    if not rows:
+        return []
+    payloads = [json.loads(r["payload"]) for r in rows]
+    live = [p for r, p in zip(rows, payloads) if r["status"] != "rejected"]
+    refills_done = sum(1 for p in payloads if p.get("refill"))
+    missing = min(sc["per_day"] - len(live), sc.get("refill_max_per_day", 10) - refills_done)
+    if missing <= 0:
+        return []
+    groups = cfg.get("groups") or shortlist.DEFAULT_GROUPS
+    short = {g: rules.get("per_day", 0) - sum(1 for p in live if p["product"].get("group") == g)
+             for g, rules in groups.items()}
+    order = [g for g, n in sorted(short.items(), key=lambda kv: -kv[1]) for _ in range(max(0, n))]
+    today = [p["product"] for p in payloads]   # rejected ones too: never offered again today
+    new_ids = []
+    while missing > 0:
+        group = order.pop(0) if order else ""
+        picks = shortlist.pick(conn, cfg, limit=1, only_group=group, today=today)
+        if not picks:
+            print("refill: no more products to offer today", file=sys.stderr)
+            break
+        product = picks[0]
+        today.append(product)
+        try:
+            payload = make_draft(product, cfg)
+        except Exception as err:
+            usage.flush(conn, None)
+            print(f"! refill {product['brand']} {product['name'][:40]}: {err}", file=sys.stderr)
+            continue
+        payload["refill"] = True
+        draft_id = db.add_draft(conn, product["store"], product["product_id"], payload)
+        usage.flush(conn, draft_id)
+        new_ids.append(draft_id)
+        missing -= 1
+        print(f"draft #{draft_id}: refill ({product.get('group')}) {product['brand']} · {product['name'][:50]}")
+    return new_ids
 
 
 def cmd_post(cfg: dict, conn) -> None:
@@ -788,6 +846,11 @@ def main(argv: list[str] | None = None) -> int:
         cmd_check(cfg, conn)          # caption cards
         cmd_check_images(cfg, conn)   # image cards
         cmd_images(cfg, conn)         # make images for newly approved captions
+        try:
+            if cmd_refill(cfg, conn):     # a ❌ today: draft a replacement so the day still has per_day posts
+                cmd_post(cfg, conn)
+        except Exception as err:
+            print(f"! refill: {err}", file=sys.stderr)
         cmd_publish(cfg, conn)
     elif args.cmd == "publish":
         cmd_publish(cfg, conn)

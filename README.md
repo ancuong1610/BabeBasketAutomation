@@ -142,6 +142,17 @@ conditioner counts as a twin: express/spray conditioners, leave-ins, masks and t
 sold alone (a shampoo's line must match exactly, or differ only by harmless words).
 At most 2 products per brand per day, and no product again within 45 days.
 
+**Every ❌ is replaced.** When a caption or image card of today's list is rejected, the next
+`check` drafts a replacement (same group first, never a product already offered today) and
+posts its card, so the day keeps `[shortlist] per_day` posts. At most `refill_max_per_day`
+replacements a day.
+
+**Prices on the card** follow the shop's price sheet (`[pricing]`, `babebasket/pricing.py`):
+shelf price minus coupon → VND at the buffered rate + cargo by weight + packaging + 5 % risk =
+cost; suggested sale price = cost ÷ (1 − 5 % fee − 30 % margin), rounded up; plus CTV price
+and deposit. The weight is estimated from the pack size in the name (marked "ước lượng"). The
+card says whether a coupon or a store offer is already counted. Captions never show a price.
+
 Never picked (`babebasket/catalog.py`):
 - anything with a flammability or pressure warning (cannot be shipped to Vietnam). For dm this is
   read from the product page's warnings ("Extrem entzündbares Aerosol…"), so pump sprays stay

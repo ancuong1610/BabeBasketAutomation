@@ -19,6 +19,7 @@ from pathlib import Path
 
 from babebasket.http import request_json, request_multipart
 from babebasket.llm import image_labels
+from babebasket.pricing import vnd
 
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
@@ -63,6 +64,16 @@ def gallery_embeds(product: dict, skip_first: bool = True) -> list[dict]:
     return [{"url": url, "image": {"url": p}} for p in photos[:GALLERY_ON_CARD - 1]]
 
 
+def price_note(product: dict, quote: dict) -> str:
+    """Is the price on the card a discounted one? Say which discount is already counted."""
+    coupon = product.get("coupon") or {}
+    if coupon.get("in_price"):
+        return f"(🏷️ {STORE_BADGES.get(product['store'], '')} đang giảm giá −{coupon.get('percent', 0):g}%, đã có trong giá kệ)"
+    if quote.get("coupon_pct"):
+        return f"(🎟️ đã trừ coupon −{quote['coupon_pct']:g}%; hết coupon thì giá cao hơn)"
+    return "(giá thường, không coupon)"
+
+
 def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings: list[str],
                has_image: bool = False) -> dict:
     labels = image_labels(draft)
@@ -88,6 +99,12 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         {"name": "Shelf price", "value": f"€{quote['shelf_eur']:.2f}{coupon} → cost €{quote['cost_eur']:.2f}", "inline": True},
         {"name": "Rating", "value": rating_text(product), "inline": True},
     ]
+    if quote.get("sale_vnd"):
+        fields.append({"name": "💰 Giá bán dự tính", "value": f"**{vnd(quote['sale_vnd'])}** {price_note(product, quote)}",
+                       "inline": False})
+        weight = f"~{quote['weight_g']} g (ước lượng)" if quote.get("weight_estimated") else f"{quote['weight_g']} g"
+        fields.append({"name": "Vốn · CTV · Cọc · Cân", "value": f"vốn {vnd(quote['cost_vnd'])} · CTV {vnd(quote['ctv_vnd'])}"
+                       f" · cọc {vnd(quote['deposit_vnd'])} · {weight}", "inline": False})
     coupon = product.get("coupon")
     if coupon:
         until = f" · đến {coupon['valid_until'][8:10]}.{coupon['valid_until'][5:7]}" if coupon.get("valid_until") else ""

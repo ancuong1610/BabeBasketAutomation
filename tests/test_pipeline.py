@@ -28,12 +28,35 @@ SHOP = {**CFG, "groups": GROUPS,
 
 
 class PricingTest(unittest.TestCase):
-    def test_quote_rounds_up_to_step(self):
-        q = pricing.quote(2.75, "dm", CFG)
-        # 2.75 * 30000 = 82,500; * 1.35 = 111,375 -> 115🐠
-        self.assertEqual(q["sale_k"], 115)
-        self.assertEqual(q["price_text"], "115🐠")
-        self.assertEqual(q["cost_eur"], 2.75)
+    def test_same_numbers_as_the_price_sheet(self):
+        # sheet rows SP191 (son bóng, €2.95, 50 g) and SP071 (Shirin scrub, €7.95, 300 g)
+        q = pricing.quote(2.95, "dm", {}, weight_g=50)
+        self.assertEqual((q["cost_vnd"], q["sale_vnd"]), (111988, 173000))
+        q = pricing.quote(7.95, "dm", {}, weight_g=300)
+        self.assertEqual((q["cost_vnd"], q["sale_vnd"], q["deposit_vnd"]), (329338, 507000, 254000))
+        self.assertEqual(q["cost_eur"], 7.95)
+
+    def test_weight_from_pack_size(self):
+        self.assertEqual(pricing.estimate_weight("Spülung Repair, 200 ml"), (260, True))
+        self.assertEqual(pricing.estimate_weight("Shampoo, 1.000 ml"), (1180, True))
+        self.assertEqual(pricing.estimate_weight("Körperöl Rose, 100 ml"), (200, True))   # glass bottle
+        self.assertEqual(pricing.estimate_weight("Lipgloss 005 Petal, 5,4 ml"), (50, True))
+        self.assertEqual(pricing.estimate_weight("Duschgel, 2 x 250 ml")[0], 610)
+        self.assertEqual(pricing.estimate_weight("Wattepads 80 St"), (300, True))
+
+    def test_card_says_which_discount_is_in_the_price(self):
+        base = {"store": "dm", "product_id": "1", "brand": "B", "name": "N, 200 ml"}
+        plain = discord.build_card(1, base, pricing.quote(3.0, "dm", {}, name=base["name"]), GOOD_DRAFT, [])
+        fields = {f["name"]: f["value"] for f in plain["embeds"][0]["fields"]}
+        self.assertIn("giá thường", fields["💰 Giá bán dự tính"])
+        self.assertIn("ước lượng", fields["Vốn · CTV · Cọc · Cân"])
+        with_coupon = discord.build_card(1, base, pricing.quote(3.0, "dm", {}, 20, name=base["name"]), GOOD_DRAFT, [])
+        self.assertIn("đã trừ coupon −20%", {f["name"]: f["value"] for f in with_coupon["embeds"][0]["fields"]}
+                      ["💰 Giá bán dự tính"])
+        offer = dict(base, store="rossmann", coupon={"percent": 25, "in_price": 1})
+        card = discord.build_card(1, offer, pricing.quote(3.0, "rossmann", {}), GOOD_DRAFT, [])
+        self.assertIn("đang giảm giá −25%", {f["name"]: f["value"] for f in card["embeds"][0]["fields"]}
+                      ["💰 Giá bán dự tính"])
 
     def test_store_coupon_lowers_cost(self):
         q = pricing.quote(10.0, "rossmann", CFG)
