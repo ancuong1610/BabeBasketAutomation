@@ -5,7 +5,7 @@
     python3 -m babebasket draft             # details + reviews + LLM drafts for the shortlist
     python3 -m babebasket post              # send drafted cards to Discord
     python3 -m babebasket check             # read caption + image approvals, make images, publish ready posts
-    python3 -m babebasket publish           # publish approved drafts to Threads ([threads].enabled)
+    python3 -m babebasket publish           # publish approved drafts to enabled platforms
     python3 -m babebasket daily             # scrape + draft + post
     python3 -m babebasket try dm 3050111    # one product end to end, printed (no Discord)
     python3 -m babebasket try dm 3050111 --image   # ... and render the post image
@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import json
 import re
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 from babebasket import config, db, llm, pricing, scene, shortlist, usage
@@ -387,6 +389,10 @@ NO_SUPPORTING = re.compile(r"(không|ko|k|bỏ)\s*(dùng\s*|kèm\s*)?ảnh\s*ph�
 MAX_SOURCE_BYTES = 15 * 1024 * 1024
 MIN_SOURCE_SIDE = 300
 IMAGE_EXT = re.compile(r"\.(jpe?g|png|webp)(\?|$)", re.I)
+CONDITIONER = r"xả|conditioner|spülung"
+PHOTO_NUMBER = re.compile(rf"\s*(?:(?:{CONDITIONER})\s+)?(?:số\s*)?(\d+)"
+                          rf"(?:\s+(?:{CONDITIONER}))?\s*", re.I)
+PHOTO_WAIT = dt.timedelta(minutes=10)
 
 
 def source_url(message: dict) -> str | None:
@@ -398,13 +404,15 @@ def source_url(message: dict) -> str | None:
     return link.group(0).rstrip(">)") if link else None
 
 
-def gallery_pick(conn, draft_id: int, text: str) -> str | None:
+def gallery_pick(conn, draft_id: int, text: str, allow_number: bool = False) -> str | None:
     """'ảnh 3' (or 'xả ảnh 2' for a pair's conditioner): that photo from the product page's gallery."""
     pick = re.search(r"ảnh\s*(?:số\s*)?(\d+)", text, re.I)
+    if not pick and allow_number:
+        pick = PHOTO_NUMBER.fullmatch(text)
     if not pick:
         return None
     product = json.loads(conn.execute("SELECT payload FROM drafts WHERE id = ?", (draft_id,)).fetchone()[0])["product"]
-    if product.get("pair") and re.search(r"xả|conditioner|spülung", text, re.I):
+    if product.get("pair") and re.search(CONDITIONER, text, re.I):
         product = product["pair"]
     gallery = product.get("gallery") or []
     n = int(pick.group(1))
@@ -434,7 +442,7 @@ def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) ->
     row = conn.execute("SELECT payload FROM drafts WHERE id = ?", (draft_id,)).fetchone()
     payload = json.loads(row["payload"])
     product = payload["product"]
-    to_pair = bool(product.get("pair")) and re.search(r"xả|conditioner|spülung", text, re.I) is not None
+    to_pair = bool(product.get("pair")) and re.search(CONDITIONER, text, re.I) is not None
     target = product["pair"] if to_pair else product
     out = DATA / "sources" / f"draft-{draft_id}-{'pair' if to_pair else 'main'}-{int(time.time())}.jpg"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -443,21 +451,28 @@ def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) ->
     target["image_url"] = out.resolve().as_uri()
     target["source_replaced_from"] = url.split("?")[0]
     payload.pop("packaging_facts", None)  # facts described the old photo
+    payload["photo_received"] = True
     db.set_payload(conn, draft_id, payload)
     return ("dầu xả" if to_pair else "dầu gội") if product.get("pair") else ""
 
 
 def cmd_source_replies(cfg: dict, conn) -> None:
-    """🖼️ The owner replied to a caption card with a photo or a photo link: use it as the product photo.
-
-    Runs before the ✅ is read, so an image is never made from the old photo once a new one was sent.
-    One Discord call per run for all waiting cards.
-    """
+    """Read replacement photos before checking caption approvals."""
     from babebasket import coupons, discord
 
     channel = cfg["discord"]["channel_id"]
     owners = {str(o) for o in cfg["discord"].get("owner_user_ids", [])}
-    cards = {r["discord_message_id"]: r["id"] for r in db.drafts(conn, "pending") if r["discord_message_id"]}
+    cards, prompts, waiting = {}, {}, {}
+    for row in db.drafts(conn, "pending"):
+        if not row["discord_message_id"]:
+            continue
+        draft_id = row["id"]
+        cards[row["discord_message_id"]] = draft_id
+        payload = json.loads(row["payload"])
+        if prompt := payload.get("photo_prompt"):
+            prompts[prompt] = row["discord_message_id"]
+            if not payload.get("photo_received"):
+                waiting[draft_id] = prompt
     if not cards:
         return
     seen = coupons._kv(conn, "source_replies_seen") or "0"
@@ -465,23 +480,43 @@ def cmd_source_replies(cfg: dict, conn) -> None:
     after = str(max(int(seen), min(numeric) - 1 if numeric else 0))
     for m in discord.replies_after(channel, after):
         after = m["id"]
-        card = (m.get("message_reference") or {}).get("message_id")
         author = m.get("author") or {}
-        if card not in cards or author.get("bot") or (owners and str(author.get("id")) not in owners):
+        if not author.get("id") or author.get("bot") or (owners and str(author["id"]) not in owners):
             continue
+        reference = m.get("message_reference") or {}
+        target = reference.get("message_id")
+        card = prompts.get(target, target)
+        if not reference:
+            # A plain message can answer a prompt only if it was sent after the prompt.
+            if not any(int(m["id"]) > int(prompt) for prompt in waiting.values()):
+                continue
+            if len(waiting) > 1:
+                discord.reply(channel, m["id"], "🖼️ Có vài draft đang chờ ảnh. Bạn bấm Reply vào tin nhắn "
+                                                "của draft muốn đổi ảnh rồi gửi lại nha.")
+                coupons._kv(conn, "source_replies_seen", after)
+                continue
+            card = prompts[next(iter(waiting.values()))]
+        if card not in cards:
+            continue
+        prompted = not reference or target in prompts
         draft_id = cards[card]
-        url = source_url(m) or gallery_pick(conn, draft_id, m.get("content") or "")
+        text = m.get("content") or ""
+        url = source_url(m) or gallery_pick(conn, draft_id, text, allow_number=prompted)
+        if not url and prompted and m.get("attachments"):
+            url = m["attachments"][0].get("url")
         if not url:
             continue
         try:
-            which = replace_source(conn, draft_id, url, m.get("content") or "")
-            discord.reply(channel, card, f"🖼️ Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
-                                         "Bấm ✅ khi sẵn sàng: ảnh AI sẽ dùng ảnh mới.")
-            print(f"draft #{draft_id}: source photo replaced")
+            which = replace_source(conn, draft_id, url, text)
         except Exception as err:
             discord.reply(channel, card, f"⚠️ Không dùng được ảnh này: {str(err)[:150]}. "
                                          "Gửi ảnh JPG/PNG khác hoặc link trực tiếp tới ảnh.")
             print(f"! draft #{draft_id}: source photo not usable: {err}", file=sys.stderr)
+        else:
+            waiting.pop(draft_id, None)
+            discord.reply(channel, card, f"🖼️ Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
+                                         "Bấm ✅ khi sẵn sàng: ảnh AI sẽ dùng ảnh mới.")
+            print(f"draft #{draft_id}: source photo replaced")
     coupons._kv(conn, "source_replies_seen", after)
 
 
@@ -501,8 +536,31 @@ def cmd_check(cfg: dict, conn) -> None:
             continue
         if not decision:
             continue
+        if decision.get("photo") and decision["status"] != "rejected" and not payload.get("photo_prompt"):
+            pair_note = '\nẢnh dầu xả: ghi thêm chữ "xả".' if payload["product"].get("pair") else ""
+            try:
+                payload["photo_prompt"] = discord.reply(
+                    channel, row["discord_message_id"],
+                    f"🖼️ Draft #{row['id']}: gửi ảnh sản phẩm bạn muốn dùng vào kênh này (không cần bấm Reply):\n"
+                    "• kéo thả hoặc đính kèm ảnh, hoặc\n"
+                    "• dán link ảnh, hoặc\n"
+                    "• gõ số ảnh của shop trong lưới ảnh ở thẻ (vd: 2)"
+                    f"{pair_note}\nGửi xong thì bấm ✅.",
+                )
+            except Exception as err:
+                print(f"! photo prompt for draft #{row['id']}: {err}", file=sys.stderr)
+                continue
+            payload["photo_wait_since"] = db.now()
+            db.set_payload(conn, row["id"], payload)
+        if decision["status"] == "pending":
+            continue
         approved = decision["status"] == "approved"
-        fields = {"chosen_caption": decision["caption"], "decided_at": db.now()}
+        now = db.now()
+        if approved and payload.get("photo_prompt") and not payload.get("photo_received"):
+            since = dt.datetime.fromisoformat(payload["photo_wait_since"])
+            if dt.datetime.fromisoformat(now) - since < PHOTO_WAIT:
+                continue
+        fields = {"chosen_caption": decision["caption"], "decided_at": now}
         if approved:
             image_cfg = cfg.get("image", {})
             style = scene.resolve_style(image_cfg, decision.get("style") or image_cfg.get("default_style") or "k0")
@@ -726,54 +784,99 @@ MAX_PUBLISH_ATTEMPTS = 3
 
 def cmd_publish(cfg: dict, conn) -> None:
     """Post drafts whose caption and image were both approved ('ready'). One failure never blocks the others."""
-    from babebasket import discord, threads
-
-    if not cfg.get("threads", {}).get("enabled"):
+    enabled = [name for name in ("threads", "instagram", "facebook") if cfg.get(name, {}).get("enabled")]
+    if not enabled:
         return
+    db_path = conn.execute("PRAGMA database_list").fetchone()["file"]
+    if not db_path:  # in-memory database
+        _publish_ready(cfg, conn, enabled)
+        return
+    # The scheduled check and a manual publish can otherwise pick up the same ready draft.
+    with Path(db_path + ".publish.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        _publish_ready(cfg, conn, enabled)
+
+
+def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
+    from babebasket import discord, meta, threads
+
     channel = cfg["discord"]["channel_id"]
-    rows = db.drafts(conn, "ready")
-    try:
-        if threads.maybe_refresh():
-            print("threads token refreshed")
-    except Exception as err:  # an old token still works until it expires; say so and carry on
-        print(f"! threads token refresh failed: {err}", file=sys.stderr)
-    for row in rows:
+    graph_version = cfg.get("meta", {}).get("graph_version", meta.DEFAULT_GRAPH_VERSION)
+    meta_options = {"graph_version": graph_version} if graph_version != meta.DEFAULT_GRAPH_VERSION else {}
+    platforms = {
+        "threads": ("Threads", "🧵", threads.MAX_CHARS, threads.publish),
+        "instagram": ("Instagram", "📸", meta.INSTAGRAM_MAX_CHARS, partial(meta.instagram_publish, **meta_options)),
+        "facebook": ("Facebook", "📘", meta.FACEBOOK_MAX_CHARS, partial(meta.facebook_publish, **meta_options)),
+    }
+    if "threads" in enabled:
+        try:
+            if threads.maybe_refresh():
+                print("threads token refreshed")
+        except (Exception, SystemExit) as err:  # also isolate missing Threads configuration
+            print(f"! threads token refresh failed: {err}", file=sys.stderr)
+
+    for row in db.drafts(conn, "ready"):
+        draft_id = row["id"]
+        card = row["discord_message_id"]
         payload = json.loads(row["payload"])
+        posted = payload.setdefault("posted", {})
+        if "threads" in payload:
+            posted.setdefault("threads", payload["threads"])
+        attempts = payload.setdefault("publish_attempts", {})
+        if isinstance(attempts, int):
+            attempts = payload["publish_attempts"] = {"threads": attempts}
+        gave_up = payload.setdefault("gave_up", [])
+        if attempts.get("threads", 0) >= MAX_PUBLISH_ATTEMPTS and "threads" not in posted and "threads" not in gave_up:
+            gave_up.append("threads")
         captions = payload["draft"].get("captions", [])
         idx = (row["chosen_caption"] or 1) - 1
         text = captions[idx]["text"] if 0 <= idx < len(captions) else ""
-        if not text or len(text) > threads.MAX_CHARS:
-            reason = f"caption {idx + 1} is {len(text)} characters; Threads allows {threads.MAX_CHARS}"
-            db.set_status(conn, row["id"], "publish_failed")
-            discord.reply(channel, row["discord_message_id"], f"⚠️ Draft #{row['id']} not posted: {reason}.")
-            print(f"! draft #{row['id']}: {reason}", file=sys.stderr)
-            continue
-        try:
-            image_url = discord.card_image_url(channel, payload.get("image_message_id") or row["discord_message_id"])
-            post = threads.publish(text, image_url, extra_images=payload.get("supporting") or None)
-        except Exception as err:
-            attempts = payload.get("publish_attempts", 0) + 1
-            payload["publish_attempts"] = attempts
-            db.set_payload(conn, row["id"], payload)
-            final = attempts >= MAX_PUBLISH_ATTEMPTS
-            if final:
-                db.set_status(conn, row["id"], "publish_failed")
-            note = "giving up" if final else f"will retry ({attempts}/{MAX_PUBLISH_ATTEMPTS})"
+        image_loaded, image_url, image_error = False, None, None
+        for platform in enabled:
+            if platform in posted or platform in gave_up:
+                continue
+            label, emoji, limit, publish = platforms[platform]
             try:
-                discord.reply(channel, row["discord_message_id"],
-                              f"⚠️ Draft #{row['id']} Threads post failed, {note}: {str(err)[:300]}")
-            except Exception:
-                pass
-            print(f"! draft #{row['id']} publish failed ({attempts}): {err}", file=sys.stderr)
-            continue
-        payload["threads"] = {**post, "published_at": db.now()}
-        db.set_payload(conn, row["id"], payload)
-        db.set_status(conn, row["id"], "published")
-        print(f"draft #{row['id']}: published {post['permalink']}")
-        try:
-            discord.reply(channel, row["discord_message_id"], f"🧵 Draft #{row['id']} is live on Threads: {post['permalink']}")
-        except Exception as err:
-            print(f"! reply for draft #{row['id']}: {err}", file=sys.stderr)
+                if not text or len(text) > limit:
+                    # Rechecking the same caption cannot make it fit this platform.
+                    gave_up.append(platform)
+                    reason = f"caption trống hoặc vượt {limit} ký tự ({len(text)} ký tự)"
+                    raise ValueError(reason)
+                if not image_loaded:
+                    image_loaded = True
+                    try:
+                        image_url = discord.card_image_url(channel, payload.get("image_message_id") or card)
+                    except Exception as err:
+                        image_error = err
+                if image_error:
+                    raise image_error
+                post = publish(text, image_url, extra_images=payload.get("supporting") or None)
+            except (Exception, SystemExit) as err:
+                attempts[platform] = attempts.get(platform, 0) + 1
+                if attempts[platform] >= MAX_PUBLISH_ATTEMPTS and platform not in gave_up:
+                    gave_up.append(platform)
+                note = ("dừng đăng" if platform in gave_up else
+                        f"sẽ thử lại ({attempts[platform]}/{MAX_PUBLISH_ATTEMPTS})")
+                reply = f"⚠️ Draft #{draft_id} {label} lỗi, {note}: {str(err)[:300]}"
+                db.set_payload(conn, draft_id, payload)
+                print(f"! draft #{draft_id} {label} publish failed ({attempts[platform]}): {err}", file=sys.stderr)
+            else:
+                posted[platform] = {**post, "published_at": db.now()}
+                link = post["permalink"] or "chưa lấy được link"
+                reply = f"{emoji} Đã đăng draft #{draft_id} lên {label}: {link}"
+                db.set_payload(conn, draft_id, payload)
+                print(f"draft #{draft_id}: published on {label} {post['permalink']}")
+            try:
+                discord.reply(channel, card, reply)
+            except (Exception, SystemExit) as err:
+                print(f"! reply for draft #{draft_id}: {err}", file=sys.stderr)
+        status = "ready"
+        if all(platform in posted or platform in gave_up for platform in enabled):
+            status = "published" if posted else "publish_failed"
+        db.set_status(conn, draft_id, status, payload=json.dumps(payload, ensure_ascii=False))
 
 
 def rossmann_product(page_path, ean: str | None) -> dict:
@@ -895,7 +998,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "check":
         run_coupons(cfg, conn)        # new screenshots/notes in #coupons
         try:
-            cmd_source_replies(cfg, conn)  # 🖼️ new product photos sent as replies to caption cards
+            cmd_source_replies(cfg, conn)  # 🖼️ new product photos for caption cards
         except Exception as err:
             print(f"! source photos: {err}", file=sys.stderr)
         cmd_check(cfg, conn)          # caption cards

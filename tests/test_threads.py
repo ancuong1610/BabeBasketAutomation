@@ -86,6 +86,7 @@ class CmdPublishTest(unittest.TestCase):
         self.conn = db.connect(":memory:")
         self.replies = []
         self.patches = [
+            mock.patch.object(threads, "maybe_refresh", return_value=False),
             mock.patch.object(discord, "reply", side_effect=lambda ch, mid, text: self.replies.append(text)),
             mock.patch.object(discord, "card_image_url", return_value="https://cdn/post.jpg"),
         ]
@@ -114,7 +115,7 @@ class CmdPublishTest(unittest.TestCase):
         pub.assert_called_once_with("Caption hai 99🐠", "https://cdn/post.jpg", extra_images=None)
         status, payload = self.row(draft_id)
         self.assertEqual(status, "published")
-        self.assertEqual(payload["threads"]["permalink"], "https://t/p")
+        self.assertEqual(payload["posted"]["threads"]["permalink"], "https://t/p")
         self.assertIn("https://t/p", self.replies[0])
 
     def test_failure_counts_attempt_and_stays_ready(self):
@@ -123,7 +124,7 @@ class CmdPublishTest(unittest.TestCase):
             cli.cmd_publish(CFG, self.conn)
         status, payload = self.row(draft_id)
         self.assertEqual(status, "ready")
-        self.assertEqual(payload["publish_attempts"], 1)
+        self.assertEqual(payload["publish_attempts"], {"threads": 1})
         self.assertIn("HTTP 500", self.replies[0])
 
     def test_third_failure_gives_up(self):

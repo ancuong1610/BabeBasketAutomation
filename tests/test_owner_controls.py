@@ -56,6 +56,10 @@ class SourcePhotoTest(unittest.TestCase):
                 mock.patch.object(cli, "fetch_bytes", side_effect=lambda url: fetched[url]):
             cli.cmd_source_replies(CFG, self.conn)
 
+    def wait_for_photo(self, draft_id, prompt):
+        payload = self.payload(draft_id)
+        db.set_payload(self.conn, draft_id, {**payload, "photo_prompt": prompt, "photo_wait_since": db.now()})
+
     def test_attached_photo_replaces_the_product_photo(self):
         draft_id = pending_draft(self.conn)
         msg = {"id": "200", "content": "", "author": {"id": "7"}, "message_reference": {"message_id": "100"},
@@ -106,6 +110,115 @@ class SourcePhotoTest(unittest.TestCase):
         with mock.patch.object(discord, "replies_after", return_value=[]) as after:
             cli.cmd_source_replies(CFG, self.conn)
         self.assertEqual(after.call_args.args[1], "206")
+
+    def test_plain_photo_goes_to_the_only_waiting_draft_and_clears_the_wait(self):
+        draft_id = pending_draft(self.conn)
+        pending_draft(self.conn, card="101")
+        self.wait_for_photo(draft_id, "110")
+        messages = [
+            {"id": "109", "author": {"id": "7"}, "content": "https://shop/earlier.jpg"},
+            {"id": "200", "author": {"id": "7"}, "attachments": [{"filename": "new.jpg", "url": "https://cdn/new.jpg"}]},
+            {"id": "201", "author": {"id": "7"}, "content": "https://shop/later.jpg"},
+        ]
+        self.run_replies(messages, {"https://cdn/new.jpg": jpg()})
+        payload = self.payload(draft_id)
+        self.assertEqual(payload["product"]["source_replaced_from"], "https://cdn/new.jpg")
+        self.assertTrue(payload["photo_received"])
+        self.assertEqual(len(self.replies), 1)
+
+    def test_plain_gallery_number_and_prompt_reply_use_product_gallery(self):
+        for text, reference in [("2", {}), ("ảnh 2", {"message_id": "110"}),
+                                ("số 2 xả", {"message_id": "110"})]:
+            with self.subTest(text=text):
+                draft_id = pending_draft(self.conn, pair=True)
+                self.wait_for_photo(draft_id, "110")
+                payload = self.payload(draft_id)
+                payload["product"]["gallery"] = ["https://shop/s1.jpg", "https://shop/s2.jpg"]
+                payload["product"]["pair"]["gallery"] = ["https://shop/c1.jpg", "https://shop/c2.jpg"]
+                db.set_payload(self.conn, draft_id, payload)
+                self.run_replies([{"id": "200", "author": {"id": "7"}, "content": text,
+                                   "message_reference": reference}],
+                                 {"https://shop/s2.jpg": jpg(), "https://shop/c2.jpg": jpg()})
+                payload = self.payload(draft_id)
+                self.assertTrue(payload["photo_received"])
+                key = payload["product"]["pair"] if "xả" in text else payload["product"]
+                self.assertEqual(key["source_replaced_from"], key["gallery"][1])
+                db.set_status(self.conn, draft_id, "approved")
+
+    def test_two_waiting_drafts_get_one_reply_under_the_ambiguous_message(self):
+        first = pending_draft(self.conn)
+        second = pending_draft(self.conn, card="101")
+        self.wait_for_photo(first, "110")
+        self.wait_for_photo(second, "111")
+        message = {"id": "200", "author": {"id": "7"}, "content": "https://shop/ambiguous.jpg"}
+        with mock.patch.object(discord, "replies_after", side_effect=[[message], []]) as read, \
+                mock.patch.object(discord, "reply") as reply, mock.patch.object(cli, "fetch_bytes") as fetch:
+            cli.cmd_source_replies(CFG, self.conn)
+            cli.cmd_source_replies(CFG, self.conn)
+        fetch.assert_not_called()
+        self.assertEqual(read.call_args.args[1], "200")
+        reply.assert_called_once()
+        self.assertEqual(reply.call_args.args[:2], ("CH", "200"))
+        self.assertIn("Reply", reply.call_args.args[2])
+        for draft_id in (first, second):
+            self.assertNotIn("photo_received", self.payload(draft_id))
+
+    def test_bad_prompted_attachment_keeps_the_wait(self):
+        draft_id = pending_draft(self.conn)
+        self.wait_for_photo(draft_id, "110")
+        message = {"id": "200", "author": {"id": "7"}, "message_reference": {"message_id": "110"},
+                   "attachments": [{"url": "https://cdn/new.pdf", "filename": "new.pdf"}]}
+        self.run_replies([message], {"https://cdn/new.pdf": b"%PDF-data"})
+        self.assertIn("không phải file ảnh", self.replies[0])
+        self.assertNotIn("photo_received", self.payload(draft_id))
+
+
+class PhotoPromptTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        self.draft = pending_draft(self.conn, pair=True)
+        self.enterContext(mock.patch.object(cli.time, "sleep"))
+        self.taps = self.enterContext(mock.patch.object(discord, "owner_taps", return_value={discord.PHOTO}))
+        self.api = self.enterContext(mock.patch.object(discord, "_call", return_value={"id": "110"}))
+        self.clock = self.enterContext(mock.patch.object(db, "now", return_value="2026-11-22T08:00:00+00:00"))
+
+    def row(self):
+        row = self.conn.execute("SELECT status, payload FROM drafts WHERE id = ?", (self.draft,)).fetchone()
+        return row["status"], json.loads(row["payload"])
+
+    def test_photo_prompt_replies_once_and_saves_the_message_and_time(self):
+        cli.cmd_check(CFG, self.conn)
+        cli.cmd_check(CFG, self.conn)
+        self.api.assert_called_once()
+        message = self.api.call_args.args[2]
+        self.assertEqual(message["message_reference"], {"message_id": "100"})
+        for text in ("không cần bấm Reply", "đính kèm ảnh", "dán link ảnh", "lưới ảnh", 'ghi thêm chữ "xả"', "✅"):
+            self.assertIn(text, message["content"])
+        status, payload = self.row()
+        self.assertEqual(status, "pending")
+        self.assertEqual(payload["photo_prompt"], "110")
+        self.assertEqual(payload["photo_wait_since"], "2026-11-22T08:00:00+00:00")
+
+    def test_approval_is_held_before_ten_minutes_and_released_at_ten(self):
+        self.taps.return_value.add(discord.APPROVE)
+        cli.cmd_check(CFG, self.conn)
+        self.assertEqual(self.row()[0], "pending")
+        self.clock.return_value = "2026-11-22T08:09:59+00:00"
+        cli.cmd_check(CFG, self.conn)
+        self.assertEqual(self.row()[0], "pending")
+        self.api.assert_called_once()
+        self.clock.return_value = "2026-11-22T08:10:00+00:00"
+        cli.cmd_check(CFG, self.conn)
+        self.assertEqual(self.row()[0], "approved")
+
+    def test_receiving_photo_releases_approval_immediately(self):
+        cli.cmd_check(CFG, self.conn)
+        _, payload = self.row()
+        db.set_payload(self.conn, self.draft, {**payload, "photo_received": True})
+        self.taps.return_value.add(discord.APPROVE)
+        cli.cmd_check(CFG, self.conn)
+        self.assertEqual(self.row()[0], "approved")
 
 
 class TextOnlyEditTest(unittest.TestCase):

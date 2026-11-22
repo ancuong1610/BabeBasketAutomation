@@ -90,6 +90,17 @@ owner_user_ids = []      # empty = every member of the server can approve (any n
 # The token is renewed automatically every 7 days; a new token pasted into .env always wins.
 enabled = true
 
+[meta]
+graph_version = "v21.0"
+
+[facebook]
+# Set META_PAGE_ACCESS_TOKEN and FACEBOOK_PAGE_ID in .env before enabling.
+enabled = false
+
+[instagram]
+# Set META_PAGE_ACCESS_TOKEN and INSTAGRAM_USER_ID in .env before enabling.
+enabled = false
+
 [image]
 # Gemini image model on OpenRouter that uses the shop packshot to make the post image.
 # Switch to "google/gemini-3-pro-image" for higher quality (costs more). enabled = false -> plain background.

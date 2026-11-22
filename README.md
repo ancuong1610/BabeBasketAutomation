@@ -1,7 +1,7 @@
 # babe basket automation
 
 Daily pipeline: scrape German drugstores → shortlist → LLM drafts in the shop's voice →
-Discord approval cards → (next) publish to Instagram and Threads.
+Discord approval cards → publish to enabled Threads, Instagram and Facebook accounts.
 Nothing is published without an approval tap in Discord.
 
 Python 3.11+; install runtime deps with `pip install -r requirements.txt`. The browser downloads its Chromium runtime on first launch.
@@ -28,11 +28,11 @@ Two steps per post, so no paid AI image is made for a post you reject.
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
 - 🏪 🎨 🤲 🫧 to pick the image style before approving (see [Kiểu ảnh](#kiểu-ảnh))
 - ✅ to approve, ❌ to reject
-- 🖼️ the store photo is not good: **reply to the caption card** with a photo (or a link to one)
-  before ✅. The AI image is then made from that photo; for a shampoo + conditioner pair write
-  "xả" in the reply to replace the conditioner's photo. Free; the original link is kept.
-  The card shows up to 4 photos of the dm product page (repeats and photos dm marks as AI-made
-  are dropped); reply "ảnh 2" (or "xả ảnh 2") to use one of them instead.
+- 🖼️ to change the product photo before ✅. After the bot prompts you, send a photo, paste an image link,
+  or type the shop photo number (for example, `2`). With several drafts waiting, reply to the prompt
+  for the draft you want to change. For a shampoo and conditioner pair, add `xả` to change the
+  conditioner photo. You can also reply directly to the caption card with a photo, link, or `ảnh 2`.
+  If you already tapped ✅, the bot waits up to 10 minutes for the replacement.
 
 **2. Image card**, sent as a reply under the caption card on the next `check` (≤1 min):
 
@@ -78,6 +78,19 @@ Reply "không ảnh phụ" to post the main image alone.
    - `DISCORD_CHANNEL_ID`: in Discord turn on Developer Mode, right-click the approval channel → Copy Channel ID
 3. Put your own Discord user ID in `config.toml` → `[discord] owner_user_ids`, so only your taps count.
 4. Run `./scripts/setup_mac.sh`: runs the tests, one LLM draft, and a Discord test message.
+
+### Facebook & Instagram
+
+Link an Instagram Business or Creator account to your Facebook Page. Give the Meta app the
+`instagram_content_publish`, `instagram_basic`, `pages_manage_posts`, and `pages_read_engagement`
+permissions for the accounts it will publish to.
+
+- `META_PAGE_ACCESS_TOKEN` is the long-lived Facebook Page token shared by both publishers.
+- `FACEBOOK_PAGE_ID` is the Facebook Page ID.
+- `INSTAGRAM_USER_ID` is the linked Instagram professional account ID.
+
+Set these values in `.env`, then set `enabled = true` under `[facebook]`, `[instagram]`, or both in
+`config.toml`. Both are disabled by default. `[meta] graph_version` defaults to `v21.0`.
 
 ### n8n
 
@@ -171,7 +184,7 @@ young workers buying self-care consumables. Each day 10 drafts, by group (`[grou
 **Makeup posts are carousels.** When a makeup caption is approved, one vision call labels the
 product page's extra photos (lip/skin swatch, shade range, texture, application…) and picks up to
 3 that show *this* shade (never a swatch of another shade). The image card shows them in a grid
-under the AI image; they are posted unchanged after it, as a Threads carousel. Reply
+under the AI image; they are posted unchanged after it in the same multi-photo post. Reply
 "không ảnh phụ" to the image card to post the AI image alone.
 
 If a group has nothing good enough that day, the best of the others fills the gap.

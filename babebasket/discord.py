@@ -26,6 +26,7 @@ NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
 APPROVE, REJECT = "✅", "❌"
 EDIT = "✏️"
 TEXT = "🔤"  # change only the words on the image: free, no AI call
+PHOTO = "🖼️"
 STYLE_EMOJI = {"🏪": "k0", "🎨": "k1", "🤲": "k3", "🫧": "k4"}
 STYLE_LABELS = {"k0": "🏪 trong cửa hàng", "k1": "🎨 flat lay", "k3": "🤲 cận tay", "k4": "🫧 kết cấu"}
 TEXT_STYLE_NOTICE = "🔤 Kiểu ảnh này không có chữ, nên bấm 🔤 sẽ không đổi ảnh."
@@ -145,8 +146,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         embeds += gallery_embeds(pair)
     card = {
         "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · "
-                   "🖼️ ảnh gốc chưa đẹp: **reply** thẻ này kèm ảnh, link ảnh, hoặc \"ảnh 2\" (ảnh thứ 2 của shop) trước khi ✅"
-                   + (" (ghi \"xả\" để thay ảnh dầu xả)" if pair else "") + " · bot phản hồi trong khoảng 1 phút"
+                   "🖼️ đổi ảnh sản phẩm: bấm 🖼️ · bot phản hồi trong khoảng 1 phút"
                    "\n· Kiểu ảnh: 🏪 trong cửa hàng (mặc định, có chữ) · 🎨 flat lay · 🤲 cận tay · 🫧 kết cấu "
                    "(3 kiểu sau: ảnh không chữ)",
         "embeds": embeds,
@@ -177,7 +177,7 @@ def _react(channel_id: str, message_id: str, emojis: list[str]) -> None:
 
 def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | None = None) -> str:
     message = _send(channel_id, card, image_path)
-    _react(channel_id, message["id"], NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI])
+    _react(channel_id, message["id"], NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI, PHOTO])
     return message["id"]
 
 
@@ -247,12 +247,13 @@ def owner_taps(channel_id: str, message_id: str, emojis: list[str], owners: list
 
 
 def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
-    """Read a caption card's approval, caption and image style once it is decided."""
-    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI], owners)
+    """Read approval, caption, style and photo change taps on a caption card."""
+    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI, PHOTO], owners)
+    photo = PHOTO in taps
     if REJECT not in taps and APPROVE not in taps:
-        return None
+        return {"status": "pending", "photo": True} if photo else None
     styles = [style for emoji, style in STYLE_EMOJI.items() if emoji in taps]
-    style = {"style": styles[0] if styles else None, "multiple_styles": len(styles) > 1}
+    style = {"style": styles[0] if styles else None, "multiple_styles": len(styles) > 1, "photo": photo}
     if REJECT in taps:
         return {"status": "rejected", "caption": None, **style}
     picked = [i + 1 for i, e in enumerate(NUMBERS[:n_captions]) if e in taps]
@@ -325,12 +326,13 @@ def unreact(channel_id: str, message_id: str, emoji: str) -> None:
     _call("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{_emoji(emoji)}/@me")
 
 
-def reply(channel_id: str, message_id: str, text: str) -> None:
-    _call(
+def reply(channel_id: str, message_id: str, text: str) -> str:
+    message = _call(
         "POST",
         f"/channels/{channel_id}/messages",
         {"content": text, "message_reference": {"message_id": message_id}, "allowed_mentions": {"parse": []}},
     )
+    return message["id"]
 
 
 def card_image_url(channel_id: str, message_id: str) -> str | None:
