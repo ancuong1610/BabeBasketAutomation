@@ -177,19 +177,22 @@ def photo_plan(payload: dict, cfg: dict) -> dict:
     return {"rule": "default", "kinds": [], "max_photos": 1}
 
 
-def plan_photos(payload: dict, cfg: dict, classify=None) -> tuple[list[str], dict]:
+def classified_gallery(product: dict, cfg: dict, classify=None) -> list[dict]:
+    try:
+        if len(product.get("gallery") or []) > 1:
+            return (classify or scene.classify_gallery)(product, cfg, fetch_bytes)
+    except (Exception, SystemExit) as err:
+        print(f"! gallery classification for {product.get('product_id')}: {err}", file=sys.stderr)
+    return []
+
+
+def plan_photos(payload: dict, cfg: dict, classify=None, *, gallery: list[dict] | None = None) -> tuple[list[str], dict]:
     """Choose supporting photos and collect confirmed contents references from the same classification."""
     product = payload["product"]
     plan = photo_plan(payload, cfg)
     evidence = {"texture": None, "swatch": None}
-    if classify is None:
-        classify = scene.classify_gallery
-    try:
-        gallery = classify(product, cfg, fetch_bytes) if len(product.get("gallery") or []) > 1 else []
-    except (Exception, SystemExit) as err:
-        print(f"! gallery classification for {product.get('product_id')}: {err}", file=sys.stderr)
-        gallery = []
-
+    if gallery is None:
+        gallery = classified_gallery(product, cfg, classify)
     packshot = product.get("source_original") or product.get("image_url")
     by_kind = {"packshot": [packshot]} if packshot else {}
     has_shade = product.get("group") == "makeup" or scene.shade_of(product.get("name", ""))
@@ -518,8 +521,8 @@ def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) ->
     return ("dầu xả" if to_pair else "dầu gội") if product.get("pair") else ""
 
 
-def cmd_source_replies(cfg: dict, conn) -> None:
-    """Read replacement photos before checking caption approvals."""
+def cmd_source_replies(cfg: dict, conn) -> set[str]:
+    """Route owner photos to caption or picker prompts before reading approvals."""
     from babebasket import coupons, discord
 
     channel = cfg["discord"]["channel_id"]
@@ -529,17 +532,26 @@ def cmd_source_replies(cfg: dict, conn) -> None:
         if not row["discord_message_id"]:
             continue
         draft_id = row["id"]
-        cards[row["discord_message_id"]] = draft_id
+        cards[row["discord_message_id"]] = (draft_id, None)
         payload = json.loads(row["payload"])
         if prompt := payload.get("photo_prompt"):
             prompts[prompt] = row["discord_message_id"]
             if not payload.get("photo_received"):
-                waiting[draft_id] = prompt
+                waiting[prompt] = row["discord_message_id"]
+    for row in db.drafts(conn, "image_pending"):
+        payload = json.loads(row["payload"])
+        picker = payload.get("picker") or {}
+        if picker.get("photo_received") or not (prompt := picker.get("photo_prompt")):
+            continue
+        prompts[prompt] = prompt
+        waiting[prompt] = prompt
+        cards[prompt] = (row["id"], payload)
     if not cards:
-        return
+        return set()
     seen = coupons._kv(conn, "source_replies_seen") or "0"
     numeric = [int(m) for m in cards if str(m).isdigit()]
     after = str(max(int(seen), min(numeric) - 1 if numeric else 0))
+    handled = set()
     for m in discord.replies_after(channel, after):
         after = m["id"]
         author = m.get("author") or {}
@@ -548,26 +560,40 @@ def cmd_source_replies(cfg: dict, conn) -> None:
         reference = m.get("message_reference") or {}
         target = reference.get("message_id")
         card = prompts.get(target, target)
+        text = m.get("content") or ""
+        photo = source_url(m)
         if not reference:
             # A plain message can answer a prompt only if it was sent after the prompt.
-            if not any(int(m["id"]) > int(prompt) for prompt in waiting.values()):
+            eligible = [prompt for prompt, destination in waiting.items() if int(m["id"]) > int(prompt)
+                        and (photo or m.get("attachments") or
+                             (destination != prompt and gallery_pick(conn, cards[destination][0], text, allow_number=True)))]
+            if not eligible:
                 continue
-            if len(waiting) > 1:
-                discord.reply(channel, m["id"], "🖼️ Có vài draft đang chờ ảnh. Bạn bấm Reply vào tin nhắn "
-                                                "của draft muốn đổi ảnh rồi gửi lại nha.")
-                coupons._kv(conn, "source_replies_seen", after)
+            if len(eligible) > 1:
+                handled.add(m["id"])
+                discord.reply(channel, m["id"], "📷 Có vài draft đang chờ ảnh. Bạn bấm Reply vào tin nhắn "
+                                                "đang hỏi ảnh của draft muốn gửi nha.")
                 continue
-            card = prompts[next(iter(waiting.values()))]
+            target = eligible[0]
+            card = waiting[target]
         if card not in cards:
             continue
         prompted = not reference or target in prompts
-        draft_id = cards[card]
-        text = m.get("content") or ""
-        url = source_url(m) or gallery_pick(conn, draft_id, text, allow_number=prompted)
+        draft_id, picker_payload = cards[card]
+        if picker_payload is not None:
+            url = photo or next((a.get("url") for a in m.get("attachments") or []), None)
+            if url:
+                handled.add(m["id"])
+                if receive_picker_photo(conn, draft_id, picker_payload, url, channel, m["id"]):
+                    waiting.pop(card, None)
+                    cards.pop(card)
+            continue
+        url = photo or gallery_pick(conn, draft_id, text, allow_number=prompted)
         if not url and prompted and m.get("attachments"):
             url = m["attachments"][0].get("url")
         if not url:
             continue
+        handled.add(m["id"])
         try:
             which = replace_source(conn, draft_id, url, text)
         except Exception as err:
@@ -575,11 +601,12 @@ def cmd_source_replies(cfg: dict, conn) -> None:
                                          "Gửi ảnh JPG/PNG khác hoặc link trực tiếp tới ảnh.")
             print(f"! draft #{draft_id}: source photo not usable: {err}", file=sys.stderr)
         else:
-            waiting.pop(draft_id, None)
-            discord.reply(channel, card, f"🖼️ Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
+            waiting = {p: c for p, c in waiting.items() if c != card}
+            discord.reply(channel, card, f"📷 Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
                                          "Bấm ✅ khi sẵn sàng: ảnh AI sẽ dùng ảnh mới.")
             print(f"draft #{draft_id}: source photo replaced")
     coupons._kv(conn, "source_replies_seen", after)
+    return handled
 
 
 def cmd_check(cfg: dict, conn) -> None:
@@ -603,7 +630,7 @@ def cmd_check(cfg: dict, conn) -> None:
             try:
                 payload["photo_prompt"] = discord.reply(
                     channel, row["discord_message_id"],
-                    f"🖼️ Draft #{row['id']}: gửi ảnh sản phẩm bạn muốn dùng vào kênh này (không cần bấm Reply):\n"
+                    f"📷 Draft #{row['id']}: gửi ảnh sản phẩm bạn muốn dùng vào kênh này (không cần bấm Reply):\n"
                     "• kéo thả hoặc đính kèm ảnh, hoặc\n"
                     "• dán link ảnh, hoặc\n"
                     "• gõ số ảnh của shop trong lưới ảnh ở thẻ (vd: 2)"
@@ -672,13 +699,14 @@ def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list
     import io
     from urllib.request import url2pathname
 
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     out = []
     for url in urls[:MAX_POST_PHOTOS - 1]:
         try:
             data = Path(url2pathname(url[7:])).read_bytes() if url.startswith("file://") else (fetch or fetch_bytes)(url)
-            img = Image.open(io.BytesIO(data))
+            with Image.open(io.BytesIO(data)) as source:
+                img = ImageOps.exif_transpose(source)
             if img.mode in ("RGBA", "LA", "P"):
                 img = img.convert("RGBA")
                 bg = Image.new("RGB", img.size, "white")
@@ -703,13 +731,46 @@ def image_review_notes(payload: dict) -> list[str]:
     return notes
 
 
+def photo_candidates(payload: dict) -> list[dict]:
+    """Use shop order with the original packshot first and owner photos last."""
+    product = payload["product"]
+    packshot = product.get("source_original") or product.get("image_url")
+    candidates = [{"url": packshot, "type": "packshot", "source": "packshot"}] if packshot else []
+    gallery = payload.get("photo_gallery")
+    if gallery is None:  # a draft planned before pickers were introduced
+        gallery = [{"url": scene.small_jpg(url, 1200), "type": "other"} for url in product.get("gallery") or []]
+    candidates.extend({"url": photo["url"], "type": photo["type"], "source": "shop"} for photo in gallery)
+    previous = (payload.get("picker") or {}).get("candidates", [])
+    candidates.extend(photo for photo in previous if photo["source"] == "shop")
+    owners = [p["url"] for p in previous if p["source"] == "owner"]
+    owners.extend(p["image_url"] for p in (product, product.get("pair") or {}) if p.get("source_replaced_from"))
+    for url in payload.get("supporting") or []:
+        if url.startswith("file://"):
+            owners.append(url)
+        else:
+            candidates.append({"url": url, "type": "other", "source": "shop"})
+    candidates.extend({"url": url, "type": "owner", "source": "owner"} for url in owners)
+    unique = {}
+    for photo in candidates:
+        unique.setdefault(scene.small_jpg(photo["url"], 1200), photo)
+    return list(unique.values())[:MAX_POST_PHOTOS - 1]
+
+
+def candidate_indexes(candidates: list[dict], urls: list[str]) -> list[int]:
+    indexes = {scene.small_jpg(photo["url"], 1200): i for i, photo in enumerate(candidates, 1)}
+    return list(dict.fromkeys(indexes[key] for url in urls if (key := scene.small_jpg(url, 1200)) in indexes))
+
+
 def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: list[str],
-                      *, require_all_photos: bool = False) -> str | None:
+                      *, require_all_photos: bool = False, candidates: list[dict] | None = None) -> str | None:
     """Upload the hero and supporting JPEGs, then save the exact set and order shown on the card."""
     from babebasket import discord
 
     supporting, extra = [], []
-    for url in (payload.get("supporting") or [])[:MAX_POST_PHOTOS - 1]:
+    urls = payload.get("supporting") or []
+    if candidates is not None:
+        urls = [candidates[i - 1]["url"] for i in candidate_indexes(candidates, urls)]
+    for url in urls[:MAX_POST_PHOTOS - 1]:
         if photo := attachable_photos([url]):
             supporting.append(url)
             extra.append(photo[0])
@@ -718,10 +779,14 @@ def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: lis
     edits_left = ai_tries_left(cfg, conn, row["id"])
     card = discord.build_image_card(row["id"], payload["product"], payload["image_source"], edits_left,
                                     "\n".join(notes), reply_to=row["discord_message_id"], supporting=supporting,
-                                    has_text=can_reletter(payload), attached=len(extra))
+                                    has_text=can_reletter(payload), attached=len(extra), picker=bool(candidates))
     channel = cfg["discord"]["channel_id"]
     message_id = discord.post_image_card(channel, card, path, edits_left, extra)
     payload.update(image_message_id=message_id, supporting=supporting, supporting_attached=len(extra))
+    if candidates:
+        selected = candidate_indexes(candidates, supporting)
+        payload["picker"] = {"message_id": None, "candidates": candidates, "selected": selected, "default": selected}
+        payload["image_card_note"] = "\n".join(notes)
     payload.pop("unposted_image", None)
     db.set_status(conn, row["id"], "image_pending", payload=json.dumps(payload, ensure_ascii=False))
     return message_id
@@ -751,9 +816,10 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
                       f"ℹ️ Draft #{draft_id} has no product photo, so it will be posted as text only.")
         return
     if "photo_rule" not in payload and not text:
-        supporting, evidence = plan_photos(payload, cfg)
+        gallery = classified_gallery(payload["product"], cfg)
+        supporting, evidence = plan_photos(payload, cfg, gallery=gallery)
         payload.setdefault("supporting", supporting)  # keep any selection already saved by the old flow
-        payload.update(evidence=evidence, photo_rule=photo_plan(payload, cfg)["rule"])
+        payload.update(evidence=evidence, photo_rule=photo_plan(payload, cfg)["rule"], photo_gallery=gallery)
         db.set_payload(conn, draft_id, payload)
         usage.flush(conn, draft_id)
     version = payload.get("image_versions", 0) + 1
@@ -797,7 +863,12 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "text": text,
                                      "notes": notes}
         db.set_payload(conn, draft_id, payload)
-    upload_image_card(cfg, conn, row, payload, path, notes)
+    upload_image_card(cfg, conn, row, payload, path, notes, candidates=photo_candidates(payload))
+    if payload.get("picker"):
+        try:
+            update_picker(cfg, conn, row, payload, set())
+        except Exception as err:  # keep the posted image card and retry the picker next check
+            print(f"! photo picker for draft #{draft_id}: {err}", file=sys.stderr)
     try:  # the image card is there: the caption card no longer waits
         discord.unreact(channel, row["discord_message_id"], discord.WAIT)
     except Exception:
@@ -840,7 +911,134 @@ def save_supporting_photo(draft_id: int, url: str) -> str | None:
     return path.resolve().as_uri()
 
 
-def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict]) -> bool:
+def picker_photo_waiting(picker: dict) -> bool:
+    since = picker.get("photo_wait_since")
+    return bool(since and not picker.get("photo_received")
+                and dt.datetime.fromisoformat(db.now()) - dt.datetime.fromisoformat(since) < PHOTO_WAIT)
+
+
+def receive_picker_photo(conn, draft_id: int, payload: dict, url: str, channel: str, message_id: str) -> bool:
+    from babebasket import discord
+
+    picker = payload["picker"]
+    candidates = picker["candidates"]
+    if len(candidates) >= MAX_POST_PHOTOS - 1:
+        discord.reply(channel, picker["photo_prompt"], "Bảng ảnh đã đủ 9 ảnh rồi nha.")
+        picker["photo_received"] = True
+    else:
+        local = save_supporting_photo(draft_id, url)
+        if not local:
+            discord.reply(channel, picker["photo_prompt"], "Ảnh này không mở được. Gửi lại ảnh khác nha.")
+            return False
+        selected = candidate_indexes(candidates, [local])
+        if not selected:
+            candidates.append({"url": local, "type": "owner", "source": "owner"})
+        picker.update(photo_received=True, pending_owner=selected[0] if selected else len(candidates))
+    picker["photo_message"] = message_id
+    db.set_payload(conn, draft_id, payload)
+    return True
+
+
+def picker_selection(picker: dict, taps: set[str]) -> tuple[list[int], bool]:
+    from babebasket import discord
+
+    numbers = discord.PICKER_NUMBERS[:len(picker["candidates"])]
+    numbered = sorted(taps.intersection([discord.PICKER_ZERO, *numbers]))
+    if discord.PICKER_ZERO in taps:
+        return [], False
+    override = picker.get("override")
+    if override and override["taps"] == numbered:
+        return override["selected"], False
+    if numbered:
+        return [i for i, emoji in enumerate(numbers, 1) if emoji in taps], False
+    return picker["default"], True
+
+
+def update_picker(cfg: dict, conn, row, payload: dict, taps: set[str],
+                  *, manual: list[int] | None = None) -> None:
+    """Sync the visible attachments before allowing the approval check to continue."""
+    from babebasket import discord, postimage
+
+    picker = payload["picker"]
+    candidates = picker["candidates"]
+    picker.setdefault("default", picker["selected"])
+    selected, automatic = picker_selection(picker, taps)
+    old_override = picker.get("override")
+    added = picker.get("pending_owner")
+    numbers = discord.PICKER_NUMBERS[:len(candidates)]
+    numbered = sorted(taps.intersection([discord.PICKER_ZERO, *numbers]))
+    if (manual is not None or added is not None) and discord.PICKER_ZERO not in taps:
+        # An upload or typed fallback is itself a selection until the owner changes their number taps.
+        if manual is not None:
+            selected = manual
+        if added is not None:
+            selected = sorted(set(selected) | {added})
+        picker["override"] = {"taps": numbered, "selected": selected}
+        automatic = False
+    elif picker.get("override") and picker["override"]["taps"] != numbered:
+        picker.pop("override")
+
+    channel, image_id = cfg["discord"]["channel_id"], payload["image_message_id"]
+    urls = [candidates[i - 1]["url"] for i in selected]
+    changed = urls != (payload.get("supporting") or [])
+    refresh = (changed or manual is not None or added is not None or picker.get("dirty")
+               or not picker.get("message_id") or picker.get("automatic") is not automatic)
+    if refresh:
+        photos = [next(iter(attachable_photos([photo["url"]])), None) for photo in candidates]
+        sheet = postimage.render_picker_sheet(candidates, selected, photos)
+        if changed:
+            extra = [photos[i - 1] for i in selected]
+            if any(photo is None for photo in extra):
+                raise RuntimeError("a selected picker photo could not be downloaded")
+            card = discord.build_image_card(row["id"], payload["product"], payload["image_source"],
+                                            ai_tries_left(cfg, conn, row["id"]),
+                                            payload.get("image_card_note", "\n".join(image_review_notes(payload))),
+                                            supporting=urls,
+                                            has_text=can_reletter(payload), attached=len(extra), picker=True)
+            discord.edit_image_card(channel, image_id, card, payload["image_path"], extra)
+            payload.update(supporting=urls, supporting_attached=len(extra))
+        # Keep the new attachment state if Discord needs a second attempt to update the picker.
+        picker.update(selected=selected, automatic=automatic, dirty=True)
+        picker.pop("pending_owner", None)
+        db.set_payload(conn, row["id"], payload)
+        picker["message_id"] = discord.write_photo_picker(channel, image_id, row["id"], selected, sheet,
+                                                          message_id=picker.get("message_id"), automatic=automatic)
+        picker.pop("dirty", None)
+        db.set_payload(conn, row["id"], payload)
+    elif old_override != picker.get("override"):
+        db.set_payload(conn, row["id"], payload)
+    seeded = picker.get("seeded")
+    if seeded != len(candidates):
+        reactions = numbers[seeded:] if seeded is not None else [*numbers, discord.PICKER_ZERO, discord.PHOTO]
+        discord._react(channel, picker["message_id"], reactions)
+        picker["seeded"] = len(candidates)
+        db.set_payload(conn, row["id"], payload)
+
+
+def sync_picker(cfg: dict, conn, row, payload: dict) -> set[str]:
+    from babebasket import discord
+
+    picker = payload["picker"]
+    channel = cfg["discord"]["channel_id"]
+    taps = set()
+    if message_id := picker.get("message_id"):
+        emojis = [*discord.PICKER_NUMBERS[:len(picker["candidates"])], discord.PICKER_ZERO, discord.PHOTO]
+        taps = discord.owner_taps(channel, message_id, emojis, cfg["discord"].get("owner_user_ids", []))
+    if discord.PHOTO in taps and not picker.get("photo_prompt"):
+        if len(picker["candidates"]) >= MAX_POST_PHOTOS - 1:
+            prompt = discord.reply(channel, message_id, "Bảng ảnh đã đủ 9 ảnh rồi nha.")
+            picker["photo_received"] = True
+        else:
+            prompt = discord.reply(channel, message_id,
+                                   "📷 Kéo thả ảnh của bạn vào kênh này (không cần Reply). "
+                                   "Ảnh sẽ được thêm vào bảng ảnh.")
+        picker.update(photo_prompt=prompt, photo_wait_since=db.now())
+        db.set_payload(conn, row["id"], payload)
+    update_picker(cfg, conn, row, payload, taps)
+    return taps
+
+
+def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict], picker_taps: set[str]) -> bool:
     """Handle photo-set replies in order. Retry the same replies if posting the replacement card fails."""
     from babebasket import discord
 
@@ -886,23 +1084,44 @@ def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict]) 
             next_number += 1
         changed = True
     if changed:
+        if picker := payload.get("picker"):
+            candidates = picker["candidates"].copy()
+            for url in supporting.values():
+                if candidate_indexes(candidates, [url]):
+                    continue
+                if len(candidates) >= MAX_POST_PHOTOS - 1:
+                    discord.reply(channel, old_card, "Bảng ảnh đã đủ 9 ảnh rồi nha.")
+                    db.set_payload(conn, row["id"], payload)
+                    return True
+                owner = url.startswith("file://")
+                candidates.append({"url": url, "type": "owner" if owner else "other",
+                                   "source": "owner" if owner else "shop"})
+            picker["candidates"] = candidates
+            update_picker(cfg, conn, row, payload, picker_taps,
+                          manual=candidate_indexes(candidates, list(supporting.values())))
+            db.set_payload(conn, row["id"], payload)
+            return True
         updated = {**payload, "supporting": list(supporting.values())}
         notes = [f"📎 Đã cập nhật bộ ảnh: {len(supporting) + 1} ảnh.", *image_review_notes(payload)]
         new_card = upload_image_card(cfg, conn, row, updated, payload["image_path"], notes, require_all_photos=True)
         if new_card:
             discord.reply(channel, old_card, "📎 Thẻ này đã được thay. Bấm ✅ ở thẻ ảnh mới nha.")
             return True
-        discord.reply(channel, old_card, "Có ảnh phụ chưa tải được. Bạn gửi lại lệnh hoặc ảnh giúp mình nha.")
+        discord.reply(channel, old_card, "Có ảnh phụ chưa tải được. Bạn thử chọn ảnh lại nha.")
     db.set_payload(conn, row["id"], payload)  # remember the reply even when it changed nothing
     return True
 
 
-def cmd_check_images(cfg: dict, conn) -> None:
+def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) -> None:
     from babebasket import discord
 
     channel = cfg["discord"]["channel_id"]
     owners = cfg["discord"].get("owner_user_ids", [])
     waiting = db.drafts(conn, "image_pending")
+    if photo_replies is None and any((json.loads(row["payload"]).get("picker") or {}).get("photo_prompt")
+                                     for row in waiting):
+        photo_replies = cmd_source_replies(cfg, conn)
+        waiting = db.drafts(conn, "image_pending")
     for row in waiting:
         payload = json.loads(row["payload"])
         message_id = payload.get("image_message_id")
@@ -914,16 +1133,22 @@ def cmd_check_images(cfg: dict, conn) -> None:
                 text = unposted.get("text", "")
                 send_image_card(cfg, conn, row, payload, ai=not text, feedback=unposted.get("feedback", ""), text=text)
                 continue
+            picker = payload.get("picker")
+            picker_taps = sync_picker(cfg, conn, row, payload) if picker else set()
             taps = discord.image_taps(channel, message_id, owners)
             decision = discord.image_decision(taps)
+            ignored = photo_replies or set()
+            if picker and picker.get("photo_message"):
+                ignored = ignored | {picker["photo_message"]}
             # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
             notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),
                                                 accept_plain=len(waiting) == 1,
-                                                also=tuple(i for i in (row["discord_message_id"],) if i))
+                                                also=tuple(i for i in (row["discord_message_id"],) if i),
+                                                ignore=ignored)
             if notes["last_id"]:
                 payload["feedback_seen"] = notes["last_id"]
             feedback = notes["text"]
-            if decision != "reject" and update_photo_set(cfg, conn, row, payload, notes["messages"]):
+            if decision != "reject" and update_photo_set(cfg, conn, row, payload, notes["messages"], picker_taps):
                 continue
             if notes["last_id"]:
                 db.set_payload(conn, row["id"], payload)
@@ -948,6 +1173,8 @@ def cmd_check_images(cfg: dict, conn) -> None:
                     discord.reply(channel, message_id,
                                   "⚠️ No edits left for this post (see [image] in config.toml). Tap ✅ or ❌.")
             elif decision == "accept":
+                if picker and picker_photo_waiting(picker):
+                    continue
                 db.set_status(conn, row["id"], "ready", decided_at=db.now())
                 discord.reply(channel, message_id, f"✅ Image for draft #{row['id']} approved. Queued for posting.")
             elif decision == "edit" and payload.get("edit_hint_for") != message_id:  # ✏️ tapped, no reply yet
@@ -1064,6 +1291,8 @@ def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
                     try:
                         if payload.get("supporting_attached"):  # every photo lives on the approved card
                             urls = discord.card_image_urls(channel, payload["image_message_id"])
+                            if payload.get("picker") and len(urls) != payload["supporting_attached"] + 1:
+                                raise RuntimeError("Discord chưa trả đủ ảnh trên thẻ đã duyệt")
                             image_url, extra_images = (urls[0] if urls else None), urls[1:]
                         else:
                             image_url = discord.card_image_url(channel, payload.get("image_message_id") or card)
@@ -1228,12 +1457,13 @@ def main(argv: list[str] | None = None) -> int:
         cmd_post(cfg, conn)
     elif args.cmd == "check":
         run_coupons(cfg, conn)        # new screenshots/notes in #coupons
+        photo_replies = set()
         try:
-            cmd_source_replies(cfg, conn)  # 🖼️ new product photos for caption cards
+            photo_replies = cmd_source_replies(cfg, conn)
         except Exception as err:
             print(f"! source photos: {err}", file=sys.stderr)
         cmd_check(cfg, conn)          # caption cards
-        cmd_check_images(cfg, conn)   # image cards
+        cmd_check_images(cfg, conn, photo_replies=photo_replies)
         cmd_images(cfg, conn)         # make images for newly approved captions
         try:
             if cmd_refill(cfg, conn):     # a ❌ today: draft a replacement so the day still has per_day posts

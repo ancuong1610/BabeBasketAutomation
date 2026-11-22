@@ -24,10 +24,13 @@ from babebasket.pricing import vnd
 
 API = "https://discord.com/api/v10"
 NUMBERS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
+PICKER_NUMBERS = NUMBERS + ["7️⃣", "8️⃣", "9️⃣"]
+PICKER_ZERO = "0️⃣"
 APPROVE, REJECT = "✅", "❌"
 EDIT = "✏️"
 TEXT = "🔤"  # change only the words on the image: free, no AI call
-PHOTO = "🖼️"
+PHOTO = "📷"
+LEGACY_PHOTO = "🖼️"
 STYLE_EMOJI = {"🏪": "k0", "🎨": "k1", "🤲": "k3", "🫧": "k4"}
 STYLE_LABELS = {"k0": "🏪 trong cửa hàng", "k1": "🎨 flat lay", "k3": "🤲 cận tay", "k4": "🫧 kết cấu"}
 TEXT_STYLE_NOTICE = "🔤 Kiểu ảnh này không có chữ, nên bấm 🔤 sẽ không đổi ảnh."
@@ -147,7 +150,7 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
         embeds += gallery_embeds(pair)
     card = {
         "content": f"**Draft #{draft_id}** · {badge} · tap a number for the caption, then ✅ to approve or ❌ to reject · "
-                   "🖼️ đổi ảnh sản phẩm: bấm 🖼️ · bot phản hồi trong khoảng 1 phút"
+                   "📷 đổi ảnh sản phẩm gốc: bấm 📷 · bot phản hồi trong khoảng 1 phút"
                    "\n· Kiểu ảnh: 🏪 trong cửa hàng (mặc định, có chữ) · 🎨 flat lay · 🤲 cận tay · 🫧 kết cấu "
                    "(3 kiểu sau: ảnh không chữ)",
         "embeds": embeds,
@@ -158,18 +161,27 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     return card
 
 
-def _send(channel_id: str, card: dict, image_path: str | None = None, extra: list[bytes] | None = None) -> dict:
+def _upload(path: str, card: dict, files: list[tuple[str, str, bytes, str]], method: str = "POST") -> dict:
+    return request_multipart(
+        API + path,
+        fields={"payload_json": json.dumps(card, ensure_ascii=False)},
+        files=files,
+        headers={"Authorization": f"Bot {secret('DISCORD_BOT_TOKEN')}", "User-Agent": BOT_UA},
+        timeout=120,
+        method=method,
+    )
+
+
+def _send(channel_id: str, card: dict, image_path: str | None = None, extra: list[bytes] | None = None,
+          *, message_id: str | None = None) -> dict:
+    path = f"/channels/{channel_id}/messages"
     if image_path:
         files = [("files[0]", "post.jpg", Path(image_path).read_bytes(), "image/jpeg")]
         files += [(f"files[{i}]", f"support-{i}.jpg", data, "image/jpeg") for i, data in enumerate(extra or [], 1)]
-        return request_multipart(
-            f"{API}/channels/{channel_id}/messages",
-            fields={"payload_json": json.dumps(card, ensure_ascii=False)},
-            files=files,
-            headers={"Authorization": f"Bot {secret('DISCORD_BOT_TOKEN')}", "User-Agent": BOT_UA},
-            timeout=120,
-        )
-    return _call("POST", f"/channels/{channel_id}/messages", card)
+        if message_id:
+            return _upload(f"{path}/{message_id}", card, files, method="PATCH")
+        return _upload(path, card, files)
+    return _call("POST", path, card)
 
 
 def _react(channel_id: str, message_id: str, emojis: list[str]) -> None:
@@ -186,7 +198,7 @@ def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | No
 
 def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
                      reply_to: str | None = None, supporting: list[str] | None = None, has_text: bool = True,
-                     attached: int = 0) -> dict:
+                     attached: int = 0, picker: bool = False) -> dict:
     """`attached` = how many supporting photos are uploaded with the card (support-1.jpg …): those are shown and
     later posted from the card itself, so what the owner approves is exactly what gets posted."""
     kind = "" if source == "gemini" else " (plain background)"
@@ -194,7 +206,7 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
         edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
     else:
         edit = "✏️ no edits left"
-    content = f"🖼️ **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
+    content = f"📷 **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
     if has_text:
         content += " · 🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý"
     if note:
@@ -203,18 +215,21 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
     attached = min(attached, 9)
     total = attached or len(supporting)
     extra_embeds = []
+    hero = "AI" if source == "gemini" else "ảnh chính"
+    if total or picker:
+        content += f"\n📎 Ảnh 1: {hero}"
     if total:
         photo_range = f"2–{total + 1}" if total > 1 else "2"
-        hero = "AI" if source == "gemini" else "ảnh chính"
         extras = "ảnh phụ" if any(url.startswith("file://") for url in supporting) else "ảnh shop"
-        content += (f"\n📎 Ảnh 1: {hero} · Ảnh {photo_range}: {extras}"
-                    "\nReply: thêm ảnh N / bỏ ảnh N / không ảnh phụ")
+        content += f" · ảnh {photo_range}: {extras}"
         urls = [f"attachment://support-{i}.jpg" for i in range(1, attached + 1)] if attached else supporting
         for i, url in enumerate(urls, start=1):
             embed = {"image": {"url": url}}
             if i < GALLERY_ON_CARD and product.get("product_url"):
                 embed["url"] = product["product_url"]
             extra_embeds.append(embed)
+    if picker:
+        content += " (đổi ở bảng ảnh bên dưới)" if total else " · chọn ảnh đăng kèm ở bảng ảnh bên dưới"
     card = {
         "content": content[:2000],
         "embeds": [{k: v for k, v in {
@@ -238,6 +253,32 @@ def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: in
     message = _send(channel_id, card, image_path, extra)
     _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []) + [TEXT])
     return message["id"]
+
+
+def edit_image_card(channel_id: str, message_id: str, card: dict, image_path: str, extra: list[bytes]) -> None:
+    _send(channel_id, card, image_path, extra, message_id=message_id)
+
+
+def write_photo_picker(channel_id: str, image_id: str, draft_id: int, selected: list[int], sheet: bytes,
+                       *, message_id: str | None = None, automatic: bool = False) -> str:
+    selection = ", ".join(map(str, sorted(selected))) or "chỉ ảnh chính"
+    if automatic:
+        selection += " (bot tự chọn)"
+    card = {
+        "content": f"📎 Chọn ảnh đăng kèm cho draft #{draft_id}: bấm số để chọn ảnh (bỏ bấm để bỏ chọn) "
+                   f"· 0️⃣ = chỉ đăng ảnh AI · 📷 = thêm ảnh của bạn. Đang chọn: {selection}. "
+                   "Bot cập nhật trong khoảng 1 phút.",
+        "attachments": [{"id": 0, "filename": "bang-anh.jpg"}],
+        "embeds": [{"image": {"url": "attachment://bang-anh.jpg"}}],
+        "allowed_mentions": {"parse": []},
+    }
+    path = f"/channels/{channel_id}/messages"
+    if not message_id:
+        card["message_reference"] = {"message_id": image_id, "fail_if_not_exists": False}
+        card.update(nonce=f"pick-{image_id}", enforce_nonce=True)
+    files = [("files[0]", "bang-anh.jpg", sheet, "image/jpeg")]
+    result = _upload(f"{path}/{message_id}", card, files, method="PATCH") if message_id else _upload(path, card, files)
+    return result["id"]
 
 
 def reactors(channel_id: str, message_id: str, emoji: str) -> list[dict]:
@@ -267,8 +308,9 @@ def owner_taps(channel_id: str, message_id: str, emojis: list[str], owners: list
 
 def read_decision(channel_id: str, message_id: str, n_captions: int, owners: list[str]) -> dict | None:
     """Read approval, caption, style and photo change taps on a caption card."""
-    taps = owner_taps(channel_id, message_id, NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI, PHOTO], owners)
-    photo = PHOTO in taps
+    taps = owner_taps(channel_id, message_id,
+                      NUMBERS[:n_captions] + [APPROVE, REJECT, *STYLE_EMOJI, PHOTO, LEGACY_PHOTO], owners)
+    photo = bool(taps & {PHOTO, LEGACY_PHOTO})
     if REJECT not in taps and APPROVE not in taps:
         return {"status": "pending", "photo": True} if photo else None
     styles = [style for emoji, style in STYLE_EMOJI.items() if emoji in taps]
@@ -305,7 +347,7 @@ def replies_after(channel_id: str, after: str) -> list[dict]:
 
 
 def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None,
-                        accept_plain: bool = False, also: tuple = ()) -> dict:
+                        accept_plain: bool = False, also: tuple = (), ignore: set[str] | None = None) -> dict:
     """Owner's text replies to the image card, newer than message id `after`.
 
     With `accept_plain` (only one image card is waiting), a plain message typed into the
@@ -313,6 +355,7 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
 
     `also`: other message ids a reply may point to (the post's caption card: replying to the
     wrong card of the same post is an easy slip).
+    `ignore`: replies already handled as photo uploads.
 
     Returns the joined text, the individual messages (with attachments), the newest reply id or None,
     and an unreadable flag.
@@ -330,6 +373,8 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
         if author.get("bot") or (owner_set and str(author.get("id")) not in owner_set):
             continue
         last_id = m["id"]
+        if ignore and last_id in ignore:
+            continue
         content = (m.get("content") or "").strip()
         if content:
             texts.append(content)

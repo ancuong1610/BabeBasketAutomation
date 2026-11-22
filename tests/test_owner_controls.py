@@ -1,4 +1,4 @@
-"""Owner controls that cost nothing: 🖼️ new product photo before ✅, 🔤 new words on the image; and cost tracking."""
+"""Owner controls that cost nothing: 📷 new product photo before ✅, 🔤 new words on the image; and cost tracking."""
 
 import io
 import json
@@ -241,10 +241,13 @@ class TextOnlyEditTest(unittest.TestCase):
             notes = {"text": "Tiêu đề mới\nÝ mới", "last_id": "R1", "unreadable": False,
                      "messages": [{"content": "Tiêu đề mới\nÝ mới"}]}
             with mock.patch.object(cli, "DATA", Path(tmp)), \
+                    mock.patch.object(cli, "fetch_bytes", return_value=jpg()), \
                     mock.patch.object(discord, "image_taps", return_value={"🔤"}), \
                     mock.patch.object(discord, "read_image_feedback", return_value=notes), \
                     mock.patch.object(cli, "build_image") as build, \
                     mock.patch.object(discord, "post_image_card", return_value="IMG2") as post, \
+                    mock.patch.object(discord, "write_photo_picker", return_value="PICKER"), \
+                    mock.patch.object(discord, "_react"), \
                     mock.patch.object(discord, "unreact"), mock.patch.object(discord, "reply"):
                 cli.cmd_check_images(CFG, conn)
             build.assert_not_called()

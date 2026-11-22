@@ -28,7 +28,7 @@ Two steps per post, so no paid AI image is made for a post you reject.
 - 1️⃣–4️⃣ to pick the caption (no number = caption 1)
 - 🏪 🎨 🤲 🫧 to pick the image style before approving (see [Kiểu ảnh](#kiểu-ảnh))
 - ✅ to approve, ❌ to reject
-- 🖼️ to change the product photo before ✅. After the bot prompts you, send a photo, paste an image link,
+- 📷 to change the product photo before ✅. After the bot prompts you, send a photo, paste an image link,
   or type the shop photo number (for example, `2`). With several drafts waiting, reply to the prompt
   for the draft you want to change. For a shampoo and conditioner pair, add `xả` to change the
   conditioner photo. You can also reply directly to the caption card with a photo, link, or `ảnh 2`.
@@ -80,12 +80,10 @@ K1, K3, and K4 get the round logo only. The plain fallback image keeps the usual
 🏪 K0, 🎨 K1 và 🤲 K3 chỉ vẽ bao bì đóng. 🫧 K4 chỉ vẽ chất sản phẩm khi có ảnh thật của đúng sản phẩm
 và đúng màu để đối chiếu. Khi thiếu ảnh thật, K4 chỉ vẽ sản phẩm trên nền marble hoặc pastel.
 
-Reply vào thẻ ảnh hoặc thẻ caption để cập nhật bộ ảnh mà vẫn giữ nguyên ảnh chính. Mỗi bài có tối đa 10 ảnh.
-
-- `thêm ảnh N` hoặc `them anh N` lấy ảnh số N trong thư viện của shop, theo thứ tự trên thẻ caption.
-- `bỏ ảnh N` hoặc `bo anh N` bỏ ảnh theo thứ tự trên thẻ ảnh. Ảnh số 1 luôn được giữ lại.
-- Gửi ảnh đính kèm cùng chữ `thêm` để thêm ảnh đó vào cuối bộ.
-- `không ảnh phụ` giữ lại ảnh chính. Bấm ✅ trên thẻ ảnh mới sau khi kiểm tra bộ ảnh.
+Bảng ảnh nằm ngay dưới thẻ ảnh. Bấm số của những ảnh bạn muốn đăng kèm hoặc bấm lại để bỏ chọn.
+Khi không bấm số nào, bot dùng bộ ảnh đã tự chọn. Bấm 0️⃣ nếu chỉ muốn đăng ảnh chính.
+Bấm 📷 để thêm ảnh của bạn, rồi kéo thả ảnh vào kênh sau khi bot nhắc. Bot cập nhật thẻ ảnh trong khoảng
+1 phút. Kiểm tra bộ ảnh trên thẻ rồi bấm ✅.
 
 ## Setup on the Mac mini
 

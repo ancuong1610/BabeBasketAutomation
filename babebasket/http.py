@@ -78,13 +78,13 @@ def encode_multipart(fields: dict[str, str], files: list[tuple[str, str, bytes, 
 
 
 def request_multipart(url: str, *, fields: dict[str, str], files: list[tuple[str, str, bytes, str]],
-                      headers: dict | None = None, timeout: float = 60, retries: int = 3):
-    """POST a multipart form and decode the JSON reply. Retries only HTTP 429 (nothing was created)."""
+                      headers: dict | None = None, timeout: float = 60, retries: int = 3, method: str = "POST"):
+    """Send a multipart form and decode the JSON reply. Retry only HTTP 429."""
     body, ctype = encode_multipart(fields, files)
     all_headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Content-Type": ctype}
     all_headers.update(headers or {})
     for attempt in range(retries + 1):
-        req = urllib.request.Request(url, data=body, headers=all_headers, method="POST")
+        req = urllib.request.Request(url, data=body, headers=all_headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
@@ -103,5 +103,5 @@ def request_multipart(url: str, *, fields: dict[str, str], files: list[tuple[str
             if raw_err[:2] == b"\x1f\x8b":
                 raw_err = gzip.decompress(raw_err)
             detail = raw_err[:500].decode(errors="replace")
-            raise RuntimeError(f"HTTP {err.code} for POST {url.split('?')[0]}: {detail}") from err
+            raise RuntimeError(f"HTTP {err.code} for {method} {url.split('?')[0]}: {detail}") from err
     raise RuntimeError("unreachable")

@@ -68,6 +68,9 @@ class SelectionTest(unittest.TestCase):
 class FlowTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
+        self.enterContext(mock.patch.object(cli, "fetch_bytes", return_value=jpg()))
+        self.enterContext(mock.patch.object(discord, "write_photo_picker", return_value="PICKER"))
+        self.enterContext(mock.patch.object(discord, "_react"))
         payload = {"product": dict(LIPGLOSS), "quote": {}, "warnings": [],
                    "draft": {"captions": [{"style": "a", "text": "Son xinh"}]}}
         self.draft_id = db.add_draft(self.conn, "dm", "L1", payload)
@@ -88,7 +91,7 @@ class FlowTest(unittest.TestCase):
             cli.cmd_images(self.cfg, self.conn)
         classify.assert_called_once()
         card = post.call_args.args[1]
-        self.assertIn("Ảnh 1: AI · Ảnh 2–3: ảnh shop", card["content"])
+        self.assertIn("Ảnh 1: AI · ảnh 2–3: ảnh shop", card["content"])
         self.assertEqual([e["image"]["url"] for e in card["embeds"]],
                          ["attachment://post.jpg", "attachment://support-1.jpg", "attachment://support-2.jpg"])
         self.assertEqual({e["url"] for e in card["embeds"]}, {"https://dm/p/L1"})
@@ -110,7 +113,7 @@ class FlowTest(unittest.TestCase):
         classify.assert_called_once()
         self.assertEqual(self.payload()["photo_rule"], "cream")
         self.assertEqual(self.payload()["supporting"], ["texture.jpg"])
-        self.assertIn("Ảnh 2: ảnh shop", post.call_args.args[1]["content"])
+        self.assertIn("ảnh 2: ảnh shop", post.call_args.args[1]["content"])
 
     def test_shampoo_gets_evidence_before_image_but_no_supporting_photos(self):
         payload = self.payload()

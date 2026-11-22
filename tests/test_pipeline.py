@@ -466,7 +466,7 @@ class DiscordTest(unittest.TestCase):
         card = discord.build_card(7, product("1"), q, GOOD_DRAFT, ["caption 2 has no price"])
         embed = card["embeds"][0]
         self.assertIn("Draft #7", card["content"])
-        self.assertIn("🖼️ đổi ảnh sản phẩm: bấm 🖼️", card["content"])
+        self.assertIn("📷 đổi ảnh sản phẩm gốc: bấm 📷", card["content"])
         self.assertIn("Kiểu ảnh: 🏪 trong cửa hàng", card["content"])
         self.assertIn("1️⃣", embed["description"])
         self.assertLessEqual(len(embed["description"]), 4096)
@@ -487,8 +487,10 @@ class DiscordTest(unittest.TestCase):
 
     def test_photo_tap_uses_the_caption_decision_read(self):
         owner = [{"id": "42"}]
-        self.assertEqual(self._decide({"🖼️": owner}, ["42"]), {"status": "pending", "photo": True})
-        self.assertTrue(self._decide({"🖼️": owner, "✅": owner}, ["42"])["photo"])
+        for emoji in ("📷", "🖼️"):
+            with self.subTest(emoji=emoji):
+                self.assertEqual(self._decide({emoji: owner}, ["42"]), {"status": "pending", "photo": True})
+                self.assertTrue(self._decide({emoji: owner, "✅": owner}, ["42"])["photo"])
         self.assertFalse(self._decide({"❌": owner}, ["42"])["photo"])
 
     def test_approve_with_caption(self):
@@ -766,7 +768,7 @@ class DiscordImageTest(unittest.TestCase):
         self.assertEqual(kwargs["files"][0][:2], ("files[0]", "post.jpg"))
         self.assertEqual(json.loads(kwargs["fields"]["payload_json"]), {"content": "x"})
         self.assertEqual([c.args[1].split("/")[-2] for c in call.call_args_list],
-                         [discord._emoji(e) for e in ("1️⃣", "2️⃣", "✅", "❌", "🏪", "🎨", "🤲", "🫧", "🖼️")])
+                         [discord._emoji(e) for e in ("1️⃣", "2️⃣", "✅", "❌", "🏪", "🎨", "🤲", "🫧", "📷")])
 
 
 class PostResilienceTest(unittest.TestCase):
@@ -826,6 +828,7 @@ class PostResilienceTest(unittest.TestCase):
              mock.patch.object(http.time, "sleep"):
             out = http.request_multipart("https://x", fields={"a": "1"}, files=[])
         self.assertEqual((out, op.call_count), ({"id": "m1"}, 2))
+        self.assertTrue(all(call.args[0].get_method() == "POST" for call in op.call_args_list))
 
 
 class StoreBadgeTest(unittest.TestCase):

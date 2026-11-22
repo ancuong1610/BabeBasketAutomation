@@ -99,11 +99,11 @@ class GiftSetPhotoTest(unittest.TestCase):
 
     def test_image_card_uploads_and_shows_attached_photos(self):
         card = discord.build_image_card(1, {"name": "Set", "product_url": "https://p", "store": "rossmann"},
-                                        "gemini", 1, supporting=["https://shop/box.png"], attached=1)
+                                        "gemini", 1, supporting=["https://shop/box.png"], attached=1, picker=True)
         self.assertEqual([a["filename"] for a in card["attachments"]], ["post.jpg", "support-1.jpg"])
         self.assertEqual(card["embeds"][1]["image"]["url"], "attachment://support-1.jpg")
-        self.assertIn("Ảnh 1: AI · Ảnh 2: ảnh shop", card["content"])
-        self.assertIn("Reply: thêm ảnh N / bỏ ảnh N / không ảnh phụ", card["content"])
+        self.assertIn("Ảnh 1: AI · ảnh 2: ảnh shop (đổi ở bảng ảnh bên dưới)", card["content"])
+        self.assertNotIn("thêm ảnh N", card["content"])
 
     def test_card_photo_links_come_back_hero_first(self):
         msg = {"attachments": [{"filename": "support-2.jpg", "url": "u2"}, {"filename": "post.jpg", "url": "u0"},

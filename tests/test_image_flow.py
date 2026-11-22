@@ -27,6 +27,7 @@ def caption_approved(conn, product_id="1"):
 class FlowTest(unittest.TestCase):
     def setUp(self):
         import tempfile
+        from tests.test_gift_photos import png_rgba
 
         self.conn = db.connect(":memory:")
         self.builds, self.cards, self.replies = [], [], []
@@ -51,7 +52,10 @@ class FlowTest(unittest.TestCase):
 
         self.patches = [
             mock.patch.object(cli, "build_image", side_effect=fake_build),
+            mock.patch.object(cli, "fetch_bytes", return_value=png_rgba()),
             mock.patch.object(discord, "post_image_card", side_effect=fake_post_image_card),
+            mock.patch.object(discord, "write_photo_picker", return_value="PICKER"),
+            mock.patch.object(discord, "_react"), mock.patch.object(discord, "owner_taps", return_value=set()),
             mock.patch.object(discord, "reply", side_effect=lambda ch, mid, text: self.replies.append(text)),
             mock.patch.object(discord, "unreact", side_effect=lambda ch, mid, e: self.unreacts.append((mid, e))),
         ]
@@ -515,6 +519,7 @@ class ReliabilityTest(unittest.TestCase):
 
     def setUp(self):
         import tempfile
+        from tests.test_gift_photos import png_rgba
 
         self.conn = db.connect(":memory:")
         self.tmp = tempfile.TemporaryDirectory()
@@ -529,6 +534,9 @@ class ReliabilityTest(unittest.TestCase):
             return path
 
         self.patches = [mock.patch.object(cli, "build_image", side_effect=fake_build),
+                        mock.patch.object(cli, "fetch_bytes", return_value=png_rgba()),
+                        mock.patch.object(discord, "write_photo_picker", return_value="PICKER"),
+                        mock.patch.object(discord, "_react"),
                         mock.patch.object(discord, "reply"), mock.patch.object(discord, "unreact")]
         for p in self.patches:
             p.start()

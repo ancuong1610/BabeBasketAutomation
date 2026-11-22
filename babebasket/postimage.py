@@ -173,6 +173,52 @@ def side_by_side(left: bytes, right: bytes, gap: int = 40) -> bytes:
     return out.getvalue()
 
 
+PICKER_TILE = 420
+PICKER_GAP = 12
+PICKER_GREEN = "#14834b"
+PICKER_LABELS = {
+    "lip_swatch": "swatch môi", "skin_swatch": "swatch da", "shade_range": "bảng màu",
+    "texture": "chất thật", "application": "người dùng thử", "contents": "bên trong set",
+    "label": "nhãn / thành phần", "product_hero": "ảnh gốc", "packshot": "ảnh gốc", "owner": "ảnh của bạn",
+}
+
+
+def render_picker_sheet(candidates: list[dict], selected: list[int], photos: list[bytes | None]) -> bytes:
+    """Draw fixed, three-column tiles so the reaction numbers stay readable in previews."""
+    columns = 3
+    rows = (len(candidates) + columns - 1) // columns
+    tile_height = PICKER_TILE + 58
+    sheet = Image.new("RGB", (columns * (PICKER_TILE + PICKER_GAP) + PICKER_GAP,
+                              rows * (tile_height + PICKER_GAP) + PICKER_GAP), "#eeeeee")
+    draw = ImageDraw.Draw(sheet)
+    for number, (candidate, photo) in enumerate(zip(candidates, photos), 1):
+        row, column = divmod(number - 1, columns)
+        x = PICKER_GAP + column * (PICKER_TILE + PICKER_GAP)
+        y = PICKER_GAP + row * (tile_height + PICKER_GAP)
+        draw.rectangle((x, y, x + PICKER_TILE - 1, y + tile_height - 1), fill="white")
+        if photo:
+            with Image.open(io.BytesIO(photo)) as image:
+                image.thumbnail((PICKER_TILE - 24, PICKER_TILE - 24), Image.Resampling.LANCZOS)
+                sheet.paste(image, (x + (PICKER_TILE - image.width) // 2, y + (PICKER_TILE - image.height) // 2))
+        else:
+            draw.text((x + PICKER_TILE // 2, y + PICKER_TILE // 2), "Ảnh chưa tải được",
+                      font=font(28), fill="#474747", anchor="mm")
+        kind = candidate["source"] if candidate["source"] == "owner" else candidate["type"]
+        draw.text((x + PICKER_TILE // 2, y + PICKER_TILE + 19), PICKER_LABELS.get(kind, "ảnh shop"),
+                  font=font(31), fill="#202332", anchor="mm")
+        draw.ellipse((x + 20, y + 20, x + 108, y + 108), fill="#202332")
+        draw.text((x + 64, y + 64), str(number), font=font(62, title=True), fill="white", anchor="mm")
+        if number in selected:
+            draw.rectangle((x, y, x + PICKER_TILE - 1, y + tile_height - 1), outline=PICKER_GREEN, width=12)
+            right = x + PICKER_TILE
+            draw.rounded_rectangle((right - 101, y + 20, right - 20, y + 101), radius=14, fill=PICKER_GREEN)
+            draw.line([(right - 82, y + 61), (right - 66, y + 77), (right - 39, y + 45)],
+                      fill="white", width=9, joint="curve")
+    output = io.BytesIO()
+    sheet.save(output, "JPEG", quality=90)
+    return output.getvalue()
+
+
 def fallback_scene(packshot: bytes) -> Image.Image:
     """Warm cream gradient with the packshot in the middle (white background blended away)."""
     top, bottom = (248, 242, 234), (233, 220, 204)

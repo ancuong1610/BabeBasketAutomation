@@ -162,6 +162,9 @@ class CardWarningTest(unittest.TestCase):
 
         cards = []
         with mock.patch.object(cli, "build_image", side_effect=fake_build), \
+                mock.patch.object(cli, "fetch_bytes", return_value=png()), \
+                mock.patch.object(discord, "write_photo_picker", return_value="PICKER"), \
+                mock.patch.object(discord, "_react"), \
                 mock.patch.object(discord, "unreact"), \
                 mock.patch.object(discord, "post_image_card", side_effect=lambda ch, card, path, n, extra=None: cards.append(card) or "M"):
             cli.send_image_card(CFG, conn, row, payload, ai=True)
