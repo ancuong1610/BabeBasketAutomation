@@ -200,12 +200,65 @@ def instagram_publish(caption: str, image_url: str | None, extra_images: list[st
     return _post_result(request, "Instagram", media, "permalink")
 
 
+# --- Facebook Page token ---------------------------------------------------------------------------------------
+# `python3 -m babebasket facebook-setup` turns a user token (Graph API Explorer, META_USER_TOKEN in .env) into the
+# Page's own token, which never expires when it comes from a long-lived user token, and saves it here (0600).
+# META_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID in .env still win when set.
+PAGE_FILE = DATA / "facebook_page.json"
+
+
+def facebook_page() -> tuple[str, str]:
+    """(page id, page token)."""
+    config.load_dotenv()
+    if os.environ.get("META_PAGE_ACCESS_TOKEN"):
+        return config.secret("FACEBOOK_PAGE_ID"), os.environ["META_PAGE_ACCESS_TOKEN"]
+    try:
+        saved = json.loads(PAGE_FILE.read_text())
+        return saved["page_id"], saved["access_token"]
+    except (OSError, ValueError, KeyError):
+        raise RuntimeError("no Facebook Page token: run `python3 -m babebasket facebook-setup`") from None
+
+
+def facebook_setup(page_name: str = "", graph_version: str = DEFAULT_GRAPH_VERSION) -> dict:
+    """META_USER_TOKEN (+ META_APP_ID/SECRET) -> long-lived user token -> the Page's token, saved in PAGE_FILE.
+    Returns {"page_id", "name", "never_expires", "tasks"}; never returns or prints a token."""
+    config.load_dotenv()
+    user = config.secret("META_USER_TOKEN")
+    app_id, app_secret = config.secret("META_APP_ID"), config.secret("META_APP_SECRET")
+    base = f"https://graph.facebook.com/{graph_version}/"
+    try:
+        long_user = request_json(base + "oauth/access_token?" + urllib.parse.urlencode(
+            {"grant_type": "fb_exchange_token", "client_id": app_id, "client_secret": app_secret,
+             "fb_exchange_token": user}), retries=1)["access_token"]
+        pages = request_json(base + "me/accounts?" + urllib.parse.urlencode(
+            {"fields": "id,name,access_token,tasks", "access_token": long_user}), retries=1).get("data") or []
+    except Exception as err:
+        raise RuntimeError(f"Facebook setup failed ({type(err).__name__}: {str(err).split(':')[0][:80]})") from None
+    if not pages:
+        raise RuntimeError("the token sees no Facebook Page: pick the Page when you click Generate Access Token")
+    wanted = [p for p in pages if page_name.lower() in (p.get("name") or "").lower()] if page_name else pages
+    if len(wanted) != 1:
+        raise RuntimeError("pick one Page: " + ", ".join(p.get("name", "?") for p in pages))
+    page = wanted[0]
+    try:
+        info = request_json(base + "debug_token?" + urllib.parse.urlencode(
+            {"input_token": page["access_token"], "access_token": f"{app_id}|{app_secret}"}), retries=1).get("data") or {}
+    except Exception:
+        info = {}
+    PAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PAGE_FILE.write_text(json.dumps({"page_id": page["id"], "name": page.get("name"), "access_token": page["access_token"],
+                                     "saved_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}))
+    os.chmod(PAGE_FILE, 0o600)
+    return {"page_id": page["id"], "name": page.get("name"), "never_expires": info.get("expires_at") == 0,
+            "tasks": page.get("tasks")}
+
+
 def facebook_publish(message: str, image_url: str | None = None, extra_images: list[str] | None = None,
                      *, graph_version: str = DEFAULT_GRAPH_VERSION) -> dict:
     if len(message) > FACEBOOK_MAX_CHARS:
         raise ValueError(f"Facebook allows {FACEBOOK_MAX_CHARS} characters")
-    page_id = config.secret("FACEBOOK_PAGE_ID")
-    request = partial(_request, graph_version, config.secret("META_PAGE_ACCESS_TOKEN"))
+    page_id, page_token = facebook_page()
+    request = partial(_request, graph_version, page_token)
     images = ([image_url] if image_url else []) + list(extra_images or [])
     photos_path = f"{page_id}/photos"
     if len(images) == 1:

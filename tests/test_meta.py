@@ -24,6 +24,7 @@ class MetaRequestTest(unittest.TestCase):
         # A real INSTAGRAM_ACCESS_TOKEN in .env must not switch these tests to Instagram Login.
         self.enterContext(mock.patch.object(meta.config, "load_dotenv"))
         env = {k: v for k, v in meta.os.environ.items() if k != "INSTAGRAM_ACCESS_TOKEN"}
+        env["META_PAGE_ACCESS_TOKEN"] = "dummy+/="
         self.enterContext(mock.patch.dict(meta.os.environ, env, clear=True))
 
     def query_calls(self, version="v21.0"):
@@ -339,3 +340,46 @@ class InstagramTokenRefreshTest(unittest.TestCase):
         self.assertFalse(meta.maybe_refresh_instagram())
         self.assertEqual(self.api.call_count, 1)  # remembered: never checked again
         self.assertEqual(meta.instagram_token(), "EAAsys")
+
+
+class FacebookPageSetupTest(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.enterContext(mock.patch.object(meta, "PAGE_FILE", tmp / "facebook_page.json"))
+        self.enterContext(mock.patch.object(meta.config, "load_dotenv"))
+        env = {k: v for k, v in meta.os.environ.items() if k not in ("META_PAGE_ACCESS_TOKEN", "FACEBOOK_PAGE_ID")}
+        env.update({"META_USER_TOKEN": "EAAuser", "META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
+        self.enterContext(mock.patch.dict(meta.os.environ, env, clear=True))
+        self.api = self.enterContext(mock.patch.object(meta, "request_json"))
+
+    def test_saves_the_page_token_and_publishing_uses_it(self):
+        self.api.side_effect = [{"access_token": "EAAlong"},
+                                {"data": [{"id": "99", "name": "Babe Basket", "access_token": "EAApage",
+                                           "tasks": ["CREATE_CONTENT"]}]},
+                                {"data": {"expires_at": 0}}]
+        info = meta.facebook_setup()
+        self.assertEqual(info, {"page_id": "99", "name": "Babe Basket", "never_expires": True,
+                                "tasks": ["CREATE_CONTENT"]})
+        self.assertNotIn("EAApage", json.dumps(info))
+        self.assertEqual(meta.PAGE_FILE.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(meta.facebook_page(), ("99", "EAApage"))
+
+    def test_no_page_or_several_pages_explain_what_to_do(self):
+        self.api.side_effect = [{"access_token": "EAAlong"}, {"data": []}]
+        with self.assertRaisesRegex(RuntimeError, "no Facebook Page"):
+            meta.facebook_setup()
+        self.api.side_effect = [{"access_token": "EAAlong"},
+                                {"data": [{"id": "1", "name": "A", "access_token": "x"},
+                                          {"id": "2", "name": "B", "access_token": "y"}]}]
+        with self.assertRaisesRegex(RuntimeError, "pick one Page: A, B"):
+            meta.facebook_setup()
+
+    def test_errors_hide_the_secret(self):
+        self.api.side_effect = RuntimeError("HTTP 400 for GET https://graph.facebook.com/x: client_secret=s3cret")
+        with self.assertRaises(RuntimeError) as ctx:
+            meta.facebook_setup()
+        self.assertNotIn("s3cret", str(ctx.exception))
+
+    def test_no_saved_page_says_how_to_set_it_up(self):
+        with self.assertRaisesRegex(RuntimeError, "facebook-setup"):
+            meta.facebook_page()

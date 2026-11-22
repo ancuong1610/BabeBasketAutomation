@@ -972,12 +972,22 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--image", action="store_true", help="also render the post image to data/images/")
     t.add_argument("--page", help="rossmann: saved category page (default rossmann_probe/category.html)")
     sub.add_parser("gemini-login", help="open Chrome on the Gemini bot profile to sign in by hand")
+    fs = sub.add_parser("facebook-setup", help="save the Facebook Page token from META_USER_TOKEN in .env")
+    fs.add_argument("--page", default="", help="part of the Page name when the account manages several Pages")
     gt = sub.add_parser("gemini-test", help="one Gemini-in-Chrome scene from a local packshot, no DB/Discord")
     gt.add_argument("image")
     gt.add_argument("--name", default="the product in the attached image")
     gt.add_argument("--out", default=str(DATA / "images" / "gemini-test.jpg"))
     args = ap.parse_args(argv)
 
+    if args.cmd == "facebook-setup":
+        from babebasket import meta
+
+        version = config.load().get("meta", {}).get("graph_version", meta.DEFAULT_GRAPH_VERSION)
+        info = meta.facebook_setup(args.page, version)
+        print(f"Facebook Page saved: {info['name']} ({info['page_id']}), never expires: {info['never_expires']}, "
+              f"tasks: {info['tasks']}. You can now delete META_USER_TOKEN from .env.")
+        return 0
     if args.cmd == "gemini-login":
         from babebasket import gemini_web
 
