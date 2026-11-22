@@ -306,7 +306,8 @@ class InstagramTokenRefreshTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "META_APP_SECRET"):
             meta.maybe_refresh_instagram()
         meta.os.environ.update({"META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
-        self.api.return_value = {"access_token": "EAAnew", "expires_in": 5184000}
+        self.api.side_effect = [{"data": {"is_valid": True, "expires_at": 1999999999}},
+                                {"access_token": "EAAnew", "expires_in": 5184000}]
         self.assertTrue(meta.maybe_refresh_instagram())
         self.assertIn("fb_exchange_token", self.api.call_args.args[0])
         self.assertEqual(meta.instagram_token(), "EAAnew")
@@ -315,7 +316,8 @@ class InstagramTokenRefreshTest(unittest.TestCase):
         meta.os.environ.update({"INSTAGRAM_ACCESS_TOKEN": "EAAold", "META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
         meta.maybe_refresh_instagram()
         self._age(8)
-        self.api.side_effect = RuntimeError("HTTP 400 for https://graph.facebook.com/...client_secret=s3cret")
+        self.api.side_effect = [{"data": {"is_valid": True, "expires_at": 1999999999}},
+                                RuntimeError("HTTP 400 for https://graph.facebook.com/...client_secret=s3cret")]
         with self.assertRaises(RuntimeError) as ctx:
             meta.maybe_refresh_instagram()
         self.assertNotIn("s3cret", str(ctx.exception))
@@ -325,3 +327,15 @@ class InstagramTokenRefreshTest(unittest.TestCase):
         meta.maybe_refresh_instagram()
         meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGpasted"
         self.assertEqual(meta.instagram_token(), "IGpasted")
+
+    def test_system_user_token_that_never_expires_is_left_alone(self):
+        meta.os.environ.update({"INSTAGRAM_ACCESS_TOKEN": "EAAsys", "META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
+        meta.maybe_refresh_instagram()
+        self._age(8)
+        self.api.return_value = {"data": {"is_valid": True, "expires_at": 0}}
+        self.assertFalse(meta.maybe_refresh_instagram())
+        self.assertEqual(self.api.call_count, 1)  # only the debug_token check, no exchange
+        self._age(30)
+        self.assertFalse(meta.maybe_refresh_instagram())
+        self.assertEqual(self.api.call_count, 1)  # remembered: never checked again
+        self.assertEqual(meta.instagram_token(), "EAAsys")

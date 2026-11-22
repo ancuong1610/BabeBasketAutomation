@@ -100,11 +100,26 @@ def instagram_token() -> str:
     return _saved_instagram().get("access_token") or _env_instagram_token()
 
 
-def _save_instagram(token: str, source: str, expires_in=None) -> None:
+def _never_expires(token: str, graph_version: str) -> bool:
+    """debug_token with the app token: expires_at 0 means the token never expires. Needs META_APP_ID/SECRET."""
+    config.load_dotenv()
+    app_id, app_secret = os.environ.get("META_APP_ID"), os.environ.get("META_APP_SECRET")
+    if not (app_id and app_secret):
+        return False
+    try:
+        data = request_json(f"https://graph.facebook.com/{graph_version}/debug_token?" + urllib.parse.urlencode(
+            {"input_token": token, "access_token": f"{app_id}|{app_secret}"}), retries=1).get("data") or {}
+    except Exception as err:
+        raise RuntimeError(f"Instagram token check failed ({type(err).__name__})") from None
+    return data.get("is_valid") is True and data.get("expires_at") == 0
+
+
+def _save_instagram(token: str, source: str, expires_in=None, never_expires: bool = False) -> None:
     now = dt.datetime.now(dt.timezone.utc)
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_FILE.write_text(json.dumps({
         "access_token": token, "source": source, "refreshed_at": now.isoformat(timespec="seconds"),
+        "never_expires": never_expires,
         "expires_at": (now + dt.timedelta(seconds=int(expires_in))).isoformat(timespec="seconds")
         if expires_in else None,
     }))
@@ -124,6 +139,12 @@ def maybe_refresh_instagram(graph_version: str = DEFAULT_GRAPH_VERSION) -> bool:
     if age < dt.timedelta(days=REFRESH_AFTER_DAYS):
         return False
     current = saved["access_token"]
+    if saved.get("never_expires"):
+        return False
+    if not current.startswith("IG") and _never_expires(current, graph_version):
+        # System-user tokens (Business portfolio) never expire; exchanging one would swap it for a 60-day token.
+        _save_instagram(current, saved["source"], never_expires=True)
+        return False
     if current.startswith("IG"):
         reply = request_json("https://graph.instagram.com/refresh_access_token?" + urllib.parse.urlencode(
             {"grant_type": "ig_refresh_token", "access_token": current}), retries=1)
