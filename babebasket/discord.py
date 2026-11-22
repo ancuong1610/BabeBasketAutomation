@@ -199,22 +199,32 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
         content += " · 🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý"
     if note:
         content += f"\n{note}"
-    if supporting:
-        content += (f"\n📎 Đăng kèm {len(supporting)} ảnh phụ của shop, xem lưới bên dưới. "
-                    "Không muốn: reply \"không ảnh phụ\".")
+    supporting = (supporting or [])[:9]
+    attached = min(attached, 9)
+    total = attached or len(supporting)
+    extra_embeds = []
+    if total:
+        photo_range = f"2–{total + 1}" if total > 1 else "2"
+        hero = "AI" if source == "gemini" else "ảnh chính"
+        extras = "ảnh phụ" if any(url.startswith("file://") for url in supporting) else "ảnh shop"
+        content += (f"\n📎 Ảnh 1: {hero} · Ảnh {photo_range}: {extras}"
+                    "\nReply: thêm ảnh N / bỏ ảnh N / không ảnh phụ")
+        urls = [f"attachment://support-{i}.jpg" for i in range(1, attached + 1)] if attached else supporting
+        for i, url in enumerate(urls, start=1):
+            embed = {"image": {"url": url}}
+            if i < GALLERY_ON_CARD and product.get("product_url"):
+                embed["url"] = product["product_url"]
+            extra_embeds.append(embed)
     card = {
         "content": content[:2000],
         "embeds": [{k: v for k, v in {
             "title": (f"{product.get('brand', '')} · {product.get('name', '')}"
                       + (f" + {product['pair'].get('name', '')}" if product.get("pair") else ""))[:256],
-            "url": product.get("product_url") if supporting else None,  # same link groups the photos as a grid
+            "url": product.get("product_url") if total else None,  # same link groups the first four photos as a grid
             "image": {"url": "attachment://post.jpg"},
             "footer": {"text": f"draft {draft_id} · image"},
             "color": STORE_COLORS.get(product.get("store"), 0xF6E7A1),
-        }.items() if v}] + ([{"url": product["product_url"], "image": {"url": f"attachment://support-{i}.jpg"}}
-                             for i in range(1, attached + 1)][:3] if attached and product.get("product_url") else
-                            [{"url": product["product_url"], "image": {"url": u}} for u in supporting[:3]]
-                            if supporting and product.get("product_url") else []),
+        }.items() if v}] + extra_embeds,
         "attachments": [{"id": 0, "filename": "post.jpg"}]
                        + [{"id": i, "filename": f"support-{i}.jpg"} for i in range(1, attached + 1)],
         "allowed_mentions": {"parse": []},
@@ -304,13 +314,14 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
     `also`: other message ids a reply may point to (the post's caption card: replying to the
     wrong card of the same post is an easy slip).
 
-    Returns {"text": joined replies, "last_id": newest reply id or None, "unreadable": bool}.
+    Returns the joined text, the individual messages (with attachments), the newest reply id or None,
+    and an unreadable flag.
     `unreadable` means a reply exists but Discord hid its text: the bot needs the
     Message Content Intent (Developer Portal -> Bot -> Privileged Gateway Intents).
     """
     messages = _call("GET", f"/channels/{channel_id}/messages?after={after or message_id}&limit=50") or []
     owner_set = {str(o) for o in owners}
-    texts, last_id, unreadable = [], None, False
+    texts, replies, last_id, unreadable = [], [], None, False
     for m in sorted(messages, key=lambda m: int(m["id"])):
         ref = (m.get("message_reference") or {}).get("message_id")
         if ref != message_id and ref not in also and not (accept_plain and ref is None):
@@ -322,9 +333,10 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
         content = (m.get("content") or "").strip()
         if content:
             texts.append(content)
+            replies.append(m)
         else:
             unreadable = True
-    return {"text": " / ".join(texts), "last_id": last_id, "unreadable": unreadable and not texts}
+    return {"text": " / ".join(texts), "messages": replies, "last_id": last_id, "unreadable": unreadable and not texts}
 
 
 WAIT = "⏳"

@@ -35,6 +35,18 @@ class GeminiWebTest(unittest.TestCase):
             scene.generate(PNG, PRODUCT, CFG, feedback="brighter", previous=b"OLD")
         self.assertEqual(run.call_args.args[0], [b"OLD", PNG])
 
+    def test_k4_uses_real_evidence_as_second_input_or_third_for_edits(self):
+        evidence = b"shop texture"
+        for kwargs, expected, position in (({}, [PNG, evidence], "SECOND"),
+                                           ({"feedback": "brighter", "previous": b"OLD"},
+                                            [b"OLD", PNG, evidence], "THIRD")):
+            with self.subTest(position=position), mock.patch.object(gemini_web, "generate_image") as gen:
+                scene.generate(PNG, PRODUCT, CFG, style="k4", evidence=evidence, **kwargs)
+                images, text, _ = gen.call_args.args
+                self.assertEqual(images, expected)
+                self.assertIn(f"The {position} attached image is a real photo", text)
+                self.assertIn("copy its colour, shade, thickness, finish and texture exactly", text)
+
     def test_daily_cap(self):
         cfg = {"image": {**CFG["image"], "gemini_web": {"min_gap": 0, "max_gap": 0, "daily_cap": 2}}}
         with mock.patch.object(gemini_web, "_run", return_value=b"IMG") as run:
@@ -93,10 +105,19 @@ class StyleTest(unittest.TestCase):
         self.assertIn("gradient studio background", text)
         self.assertIn("the product holds 400 ml", text)
 
-    def test_k4_shows_a_swatch_of_the_products_texture(self):
+    def test_k4_without_evidence_shows_only_the_product(self):
         text = self._prompt("k4")
-        self.assertIn("swatch or smear", text)
-        self.assertIn("real texture", text)
+        self.assertIn("light marble or pastel surface", text)
+        self.assertIn("Show only the product with no swatch", text)
+        self.assertIn("only the CLOSED packaging", text)
+
+    def test_other_styles_forbid_showing_contents_even_when_evidence_is_available(self):
+        for style in ("k0", "k1", "k3"):
+            for kwargs in ({}, {"feedback": "open the jar", "previous": b"OLD"}):
+                with self.subTest(style=style, edit=bool(kwargs)):
+                    text = self._prompt(style, evidence=b"shop texture", **kwargs)
+                    self.assertIn("only the CLOSED packaging", text)
+                    self.assertIn("Never show the product opened, applied, dripping or swatched", text)
 
     def test_all_styles_keep_packaging_rules_and_only_k0_reserves_text_space(self):
         for style in scene.STYLES:
@@ -112,7 +133,7 @@ class StyleTest(unittest.TestCase):
     def test_pair_notes_preserve_both_bottles_and_relative_sizes(self):
         pair = {**PRODUCT, "pair": {"name": "Conditioner"}}
         for style, note in {"k0": "two hands of the same woman", "k1": "lying next to each other",
-                            "k3": "two hands of the same woman", "k4": "side by side with one swatch"}.items():
+                            "k3": "two hands of the same woman", "k4": "closed bottles side by side"}.items():
             with self.subTest(style=style):
                 text = self._prompt(style, pair)
                 self.assertIn(note, text)

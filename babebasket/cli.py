@@ -156,13 +156,57 @@ def fetch_bytes(url: str) -> bytes:
         return resp.read()
 
 
-def supporting_photos(product: dict, cfg: dict, **selection) -> list[str]:
-    """Shop photos to post after the AI image. Never blocks the image itself."""
+MAX_POST_PHOTOS = 10
+
+
+def photo_plan(payload: dict, cfg: dict) -> dict:
+    """Return the first configured rule matching any of the product's attributes."""
+    product = payload["product"]
+    if product.get("pair"):
+        return {"rule": "pair", "kinds": [], "max_photos": 1}
+    categories = set((product.get("categories") or "").split("; "))
+    llm_kind = ((payload.get("draft") or {}).get("labels") or {}).get("kind")
+    for rule in cfg.get("photos", {}).get("rule", []):
+        pattern = rule.get("name_regex")
+        if (not any(key in rule for key in ("name_regex", "groups", "categories", "llm_kinds"))
+                or (pattern and re.search(pattern, product.get("name") or "", re.I))
+                or product.get("group") in rule.get("groups", [])
+                or categories.intersection(rule.get("categories", []))
+                or llm_kind in rule.get("llm_kinds", [])):
+            return {"rule": rule["name"], "kinds": rule.get("kinds", []), "max_photos": rule.get("max_photos", 1)}
+    return {"rule": "default", "kinds": [], "max_photos": 1}
+
+
+def plan_photos(payload: dict, cfg: dict, classify=None) -> tuple[list[str], dict]:
+    """Choose supporting photos and collect confirmed contents references from the same classification."""
+    product = payload["product"]
+    plan = photo_plan(payload, cfg)
+    evidence = {"texture": None, "swatch": None}
+    if classify is None:
+        classify = scene.classify_gallery
     try:
-        return scene.select_supporting(product, cfg, fetch_bytes, **selection)
-    except Exception as err:
-        print(f"! supporting photos for {product.get('product_id')}: {err}", file=sys.stderr)
-        return []
+        gallery = classify(product, cfg, fetch_bytes) if len(product.get("gallery") or []) > 1 else []
+    except (Exception, SystemExit) as err:
+        print(f"! gallery classification for {product.get('product_id')}: {err}", file=sys.stderr)
+        gallery = []
+
+    packshot = product.get("source_original") or product.get("image_url")
+    by_kind = {"packshot": [packshot]} if packshot else {}
+    has_shade = product.get("group") == "makeup" or scene.shade_of(product.get("name", ""))
+    for photo in gallery:
+        url, kind, shade = photo["url"], photo["type"], photo.get("this_shade")
+        if shade is True:
+            if kind == "texture" and evidence["texture"] is None:
+                evidence["texture"] = url
+            if kind in ("lip_swatch", "skin_swatch") and evidence["swatch"] is None:
+                evidence["swatch"] = url
+        if kind in scene.SHADE_PHOTO_TYPES and (shade is False or (has_shade and shade is not True)):
+            continue
+        if kind != "packshot":
+            by_kind.setdefault(kind, []).append(url)
+    urls = list(dict.fromkeys(url for kind in plan["kinds"] for url in by_kind.get(kind, [])))
+    limit = max(0, min(plan["max_photos"], MAX_POST_PHOTOS) - 1)
+    return urls[:limit], evidence
 
 
 def labels_for(payload: dict) -> dict:
@@ -242,12 +286,28 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
         print(f"! packshot download failed for {product['product_id']}: {err}", file=sys.stderr)
         return None
     style = scene.resolve_style(cfg.get("image", {}), payload.get("style"))
+    evidence = None
+    payload.pop("image_note", None)
+    if ai and style == "k4":
+        refs = payload.get("evidence") or {}
+        for kind in ("texture", "swatch"):
+            if url := refs.get(kind):
+                try:
+                    evidence = fetch_bytes(url)
+                except Exception as err:
+                    print(f"! {kind} evidence download failed for {product.get('product_id')}: {err}", file=sys.stderr)
+                if evidence:
+                    break
+        if not evidence:
+            payload["image_note"] = ("🫧 Shop không có ảnh chất thật của sản phẩm này, nên ảnh không vẽ chất kem "
+                                     "(không để AI tự bịa).")
     source, base = "fallback", None
     facts = ""
     if ai and describe:  # e.g. "opaque iridescent pink bottle": stops the model inventing clear plastic
         facts = payload.get("packaging_facts") or describe(packshot, cfg)
         payload["packaging_facts"] = facts
-    extra = {k: v for k, v in (("feedback", feedback), ("previous", previous), ("facts", facts)) if v}
+    extra = {k: v for k, v in (("feedback", feedback), ("previous", previous), ("facts", facts),
+                               ("evidence", evidence)) if v}
     generated = gen(packshot, product, cfg, style=style, **extra) if ai else None
     payload.pop("fidelity", None)
     if generated:
@@ -256,7 +316,7 @@ def build_image(payload: dict, out, cfg: dict, fetch_bytes=fetch_bytes, gen=None
             base.load()
             source = "gemini"
             if check:
-                payload["fidelity"] = check(packshot, generated, cfg, facts=facts)
+                payload["fidelity"] = check(packshot, generated, cfg, facts=facts, style=style, evidence=evidence)
         except (UnidentifiedImageError, OSError) as err:
             print(f"! scene was not an image for {product['product_id']}: {err}", file=sys.stderr)
             base = None
@@ -386,6 +446,8 @@ def cmd_post(cfg: dict, conn) -> None:
 
 
 NO_SUPPORTING = re.compile(r"(không|ko|k|bỏ)\s*(dùng\s*|kèm\s*)?ảnh\s*phụ", re.I)
+SUPPORT_COMMAND = re.compile(r"(thêm|them|bỏ|bo)\s+(?:ảnh|anh)\s+(?:số\s+)?(-?\d+)", re.I)
+ADD_PHOTO = re.compile(r"\b(?:thêm|them)\b", re.I)
 MAX_SOURCE_BYTES = 15 * 1024 * 1024
 MIN_SOURCE_SIDE = 300
 IMAGE_EXT = re.compile(r"\.(jpe?g|png|webp)(\?|$)", re.I)
@@ -604,24 +666,18 @@ def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
     return max(0, min(per_post, per_day))
 
 
-GIFT_SET = re.compile(r"geschenk|gift\s*set|\bset\b|adventskalender", re.I)
-
-
-def is_gift_set(product: dict) -> bool:
-    return bool(GIFT_SET.search(product.get("name") or "")) or "Geschenksets" in (product.get("categories") or "")
-
-
 def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list[bytes]:
     """Supporting photos as JPEG bytes to upload with the image card (Instagram takes JPEG only; Rossmann serves PNG).
     A photo that cannot be fetched or read is skipped: the post then simply has one photo less."""
     import io
+    from urllib.request import url2pathname
 
     from PIL import Image
 
     out = []
-    for url in urls[:9]:
+    for url in urls[:MAX_POST_PHOTOS - 1]:
         try:
-            data = Path(url[7:]).read_bytes() if url.startswith("file://") else (fetch or fetch_bytes)(url)
+            data = Path(url2pathname(url[7:])).read_bytes() if url.startswith("file://") else (fetch or fetch_bytes)(url)
             img = Image.open(io.BytesIO(data))
             if img.mode in ("RGBA", "LA", "P"):
                 img = img.convert("RGBA")
@@ -636,6 +692,39 @@ def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list
         except Exception as err:
             print(f"! supporting photo skipped ({url.split('?')[0][-60:]}): {err}", file=sys.stderr)
     return out
+
+
+def image_review_notes(payload: dict) -> list[str]:
+    notes = [payload["image_note"]] if payload.get("image_note") else []
+    fidelity = payload.get("fidelity") or {}
+    if fidelity.get("match") is False:
+        notes.append("⚠️ Có thể khác bao bì thật: " + " · ".join(fidelity.get("problems", []))
+                     + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
+    return notes
+
+
+def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: list[str],
+                      *, require_all_photos: bool = False) -> str | None:
+    """Upload the hero and supporting JPEGs, then save the exact set and order shown on the card."""
+    from babebasket import discord
+
+    supporting, extra = [], []
+    for url in (payload.get("supporting") or [])[:MAX_POST_PHOTOS - 1]:
+        if photo := attachable_photos([url]):
+            supporting.append(url)
+            extra.append(photo[0])
+        elif require_all_photos:
+            return None
+    edits_left = ai_tries_left(cfg, conn, row["id"])
+    card = discord.build_image_card(row["id"], payload["product"], payload["image_source"], edits_left,
+                                    "\n".join(notes), reply_to=row["discord_message_id"], supporting=supporting,
+                                    has_text=can_reletter(payload), attached=len(extra))
+    channel = cfg["discord"]["channel_id"]
+    message_id = discord.post_image_card(channel, card, path, edits_left, extra)
+    payload.update(image_message_id=message_id, supporting=supporting, supporting_attached=len(extra))
+    payload.pop("unposted_image", None)
+    db.set_status(conn, row["id"], "image_pending", payload=json.dumps(payload, ensure_ascii=False))
+    return message_id
 
 
 def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "", feedback: str = "",
@@ -661,6 +750,12 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         discord.reply(channel, row["discord_message_id"],
                       f"ℹ️ Draft #{draft_id} has no product photo, so it will be posted as text only.")
         return
+    if "photo_rule" not in payload and not text:
+        supporting, evidence = plan_photos(payload, cfg)
+        payload.setdefault("supporting", supporting)  # keep any selection already saved by the old flow
+        payload.update(evidence=evidence, photo_rule=photo_plan(payload, cfg)["rule"])
+        db.set_payload(conn, draft_id, payload)
+        usage.flush(conn, draft_id)
     version = payload.get("image_versions", 0) + 1
     old_ai_image = payload.get("image_path") if payload.get("image_source") == "gemini" else None
     unposted = payload.get("unposted_image") or {}
@@ -679,15 +774,6 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         payload["image_versions"] = version
         use_ai, path = False, old_ai_image
     else:
-        product = payload["product"]
-        if use_ai and not feedback and not product.get("pair") and "supporting" not in payload:
-            categories = (product.get("categories") or "").split("; ")
-            if is_gift_set(product):  # buyers want to see the real box and what is inside it
-                payload["supporting"] = [product.get("source_original") or product["image_url"]]
-            elif product.get("group") == "makeup":
-                payload["supporting"] = supporting_photos(product, cfg)
-            elif any(category in cfg.get("image", {}).get("texture_categories", []) for category in categories):
-                payload["supporting"] = supporting_photos(product, cfg, kinds=("texture",), limit=1)
         previous = None
         scene_path = payload.get("scene_path")
         if feedback and use_ai and payload.get("image_source") == "gemini" and scene_path and Path(scene_path).exists():
@@ -706,30 +792,17 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
             db.log_image_call(conn, draft_id, ok)
             if not ok:
                 notes.append("The AI image failed, so this is the plain background.")
-        fidelity = payload.get("fidelity") or {}
-        if fidelity.get("match") is False:
-            notes.append("⚠️ Có thể khác bao bì thật: " + "; ".join(fidelity.get("problems", []))
-                         + ". Bấm ✏️ để sửa hoặc ❌ để bỏ.")
+        notes.extend(image_review_notes(payload))
         # Saved before the Discord card goes out: if posting fails, the next run resends this image.
         payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "text": text,
                                      "notes": notes}
         db.set_payload(conn, draft_id, payload)
-    edits_left = ai_tries_left(cfg, conn, draft_id)
-    source = payload["image_source"]
-    extra = attachable_photos(payload.get("supporting") or [])
-    card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
-                                    reply_to=row["discord_message_id"], supporting=payload.get("supporting"),
-                                    has_text=can_reletter(payload), attached=len(extra))
-    payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left, extra)
-    payload["supporting_attached"] = len(extra)
-    payload.pop("unposted_image", None)
+    upload_image_card(cfg, conn, row, payload, path, notes)
     try:  # the image card is there: the caption card no longer waits
         discord.unreact(channel, row["discord_message_id"], discord.WAIT)
     except Exception:
         pass
-    db.set_payload(conn, draft_id, payload)
-    db.set_status(conn, draft_id, "image_pending")
-    print(f"draft #{draft_id}: image card v{version} ({source})")
+    print(f"draft #{draft_id}: image card v{version} ({payload['image_source']})")
 
 
 def cmd_images(cfg: dict, conn) -> None:
@@ -739,6 +812,89 @@ def cmd_images(cfg: dict, conn) -> None:
             send_image_card(cfg, conn, row, json.loads(row["payload"]), ai=True)
         except Exception as err:  # one bad image must not block the others; retried on the next check
             print(f"! image for draft #{row['id']}: {err}", file=sys.stderr)
+
+
+def photo_set_command(message: dict) -> tuple[str, int | str | None] | None:
+    text = (message.get("content") or "").strip()
+    if NO_SUPPORTING.search(text):
+        return "clear", None
+    if ADD_PHOTO.search(text) and (url := source_url({"attachments": message.get("attachments")})):
+        return "attachment", url
+    if match := SUPPORT_COMMAND.fullmatch(text):
+        return ("gallery" if ADD_PHOTO.fullmatch(match[1]) else "remove"), int(match[2])
+    return None
+
+
+def save_supporting_photo(draft_id: int, url: str) -> str | None:
+    """Keep the owner's image locally so future cards can use it after the Discord link expires."""
+    from hashlib import sha256
+
+    attachment = sha256(url.split("?", 1)[0].encode()).hexdigest()[:16]
+    path = DATA / "sources" / f"draft-{draft_id}-support-{attachment}.jpg"
+    if not path.exists():
+        photos = attachable_photos([url])
+        if not photos:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(photos[0])
+    return path.resolve().as_uri()
+
+
+def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict]) -> bool:
+    """Handle photo-set replies in order. Retry the same replies if posting the replacement card fails."""
+    from babebasket import discord
+
+    commands = [command for message in messages if (command := photo_set_command(message))]
+    if not commands:
+        return False
+    channel = cfg["discord"]["channel_id"]
+    old_card = payload["image_message_id"]
+    urls = payload.get("supporting") or []
+    attached = payload.get("supporting_attached")
+    if attached and attached != len(urls):  # older cards may have skipped a failed download
+        urls = discord.card_image_urls(channel, old_card)[1:attached + 1]
+    supporting = dict(enumerate(urls, start=2))
+    next_number = len(urls) + 2
+    gallery = payload["product"].get("gallery") or []
+    changed = False
+    for action, target in commands:
+        if action == "clear":
+            supporting.clear()
+        elif action == "remove":
+            if target == 1:
+                discord.reply(channel, old_card, "Ảnh 1 là ảnh chính nên không bỏ được nha.")
+                continue
+            if target not in supporting or target > len(urls) + 1:
+                discord.reply(channel, old_card, f"Bộ ảnh không có ảnh số {target} nha.")
+                continue
+            supporting.pop(target)
+        else:
+            if action == "gallery" and not 1 <= target <= len(gallery):
+                discord.reply(channel, old_card, f"Shop không có ảnh số {target} nha.")
+                continue
+            if len(supporting) >= MAX_POST_PHOTOS - 1:
+                discord.reply(channel, old_card, "Bộ ảnh đã đủ 10 ảnh rồi nha.")
+                continue
+            if action == "gallery":
+                url = scene.small_jpg(gallery[target - 1], 1200)
+            else:
+                url = save_supporting_photo(row["id"], target)
+            if not url:
+                discord.reply(channel, old_card, "Ảnh này không mở được. Gửi lại ảnh khác nha.")
+                continue
+            supporting[next_number] = url
+            next_number += 1
+        changed = True
+    if changed:
+        updated = {**payload, "supporting": list(supporting.values())}
+        notes = [f"📎 Đã cập nhật bộ ảnh: {len(supporting) + 1} ảnh.", *image_review_notes(payload)]
+        new_card = upload_image_card(cfg, conn, row, updated, payload["image_path"], notes, require_all_photos=True)
+        if new_card:
+            discord.reply(channel, old_card, "📎 Thẻ này đã được thay. Bấm ✅ ở thẻ ảnh mới nha.")
+            return True
+        discord.reply(channel, old_card, "Có ảnh phụ chưa tải được. Bạn gửi lại lệnh hoặc ảnh giúp mình nha.")
+    db.set_payload(conn, row["id"], payload)  # remember the reply even when it changed nothing
+    return True
 
 
 def cmd_check_images(cfg: dict, conn) -> None:
@@ -755,7 +911,8 @@ def cmd_check_images(cfg: dict, conn) -> None:
         try:
             unposted = payload.get("unposted_image")
             if unposted:  # an edited image was made but its card failed to post: send it now
-                send_image_card(cfg, conn, row, payload, ai=True, feedback=unposted.get("feedback", ""))
+                text = unposted.get("text", "")
+                send_image_card(cfg, conn, row, payload, ai=not text, feedback=unposted.get("feedback", ""), text=text)
                 continue
             taps = discord.image_taps(channel, message_id, owners)
             decision = discord.image_decision(taps)
@@ -765,21 +922,18 @@ def cmd_check_images(cfg: dict, conn) -> None:
                                                 also=tuple(i for i in (row["discord_message_id"],) if i))
             if notes["last_id"]:
                 payload["feedback_seen"] = notes["last_id"]
+            feedback = notes["text"]
+            if decision != "reject" and update_photo_set(cfg, conn, row, payload, notes["messages"]):
+                continue
+            if notes["last_id"]:
                 db.set_payload(conn, row["id"], payload)
             if notes["unreadable"] and decision != "reject":
                 discord.reply(channel, message_id,
                               "⚠️ I can't read your reply: turn on **Message Content Intent** for the bot "
                               "(Discord Developer Portal → Bot → Privileged Gateway Intents), then reply again.")
-            feedback = notes["text"]
-
             if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
                 discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
-            elif feedback and payload.get("supporting") and NO_SUPPORTING.search(feedback):
-                decision = "no supporting photos"
-                payload["supporting"] = []
-                db.set_payload(conn, row["id"], payload)
-                discord.reply(channel, message_id, "📎 Ok, bài này chỉ đăng ảnh AI, không kèm ảnh của shop.")
             elif feedback and discord.TEXT in taps:  # 🔤 + reply: new words on the same scene, no AI call
                 decision = "text"
                 send_image_card(cfg, conn, row, payload, ai=False, text=feedback)
@@ -988,6 +1142,8 @@ def cmd_try(cfg: dict, store: str, product_id: str, image: bool = False, page: s
     payload = make_draft(product, cfg)
     print(json.dumps({k: payload[k] for k in ("product", "quote", "draft", "warnings")}, ensure_ascii=False, indent=1))
     if image:
+        if scene.resolve_style(cfg.get("image", {})) == "k4":
+            _, payload["evidence"] = plan_photos(payload, cfg)
         path = build_image(payload, DATA / "images" / f"try-{product_id}.jpg", cfg)
         print(f"image ({payload.get('image_source', 'none')}): {path}")
 

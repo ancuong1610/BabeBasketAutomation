@@ -1,5 +1,6 @@
 """The AI image must look like the real packaging: facts are read first, the result is checked after."""
 
+import base64
 import io
 import json
 import unittest
@@ -33,6 +34,9 @@ class DescribeTest(unittest.TestCase):
         body = post.call_args.kwargs["body"]
         self.assertEqual(body["model"], "m")                  # the cheap text model reads the photo
         self.assertEqual(body["messages"][0]["content"][1]["type"], "image_url")
+        text = body["messages"][0]["content"][0]["text"]
+        self.assertIn('"contents_visible"', text)
+        self.assertIn('Otherwise return "not visible". Never guess what is inside.', text)
 
     def test_failure_gives_no_facts(self):
         self.assertEqual(scene.describe_packaging(png(), CFG, post=mock.Mock(side_effect=RuntimeError("x")), api_key="k"), "")
@@ -47,9 +51,9 @@ class DescribeTest(unittest.TestCase):
 
 
 class CheckTest(unittest.TestCase):
-    def check(self, answer=None, error=None, facts=""):
+    def check(self, answer=None, error=None, facts="", **kwargs):
         post = mock.Mock(return_value=reply(answer), side_effect=error)
-        return scene.check_fidelity(png(), png("blue"), CFG, post=post, api_key="k", facts=facts), post
+        return scene.check_fidelity(png(), png("blue"), CFG, post=post, api_key="k", facts=facts, **kwargs), post
 
     def test_mismatch_with_problems(self):
         result, _ = self.check({"match": False, "problems": ["thân chai trong suốt thay vì đục"]})
@@ -67,14 +71,33 @@ class CheckTest(unittest.TestCase):
         self.assertIn("opacity: opaque", text)
         self.assertIn('"match"', text)   # the JSON example survives filling in the facts
 
+    def test_k4_checks_colour_and_texture_against_the_third_image(self):
+        evidence = png("green")
+        problem = "màu chất kem khác ảnh thật"
+        result, post = self.check({"match": False, "problems": [problem]}, style="k4", evidence=evidence)
+        parts = post.call_args.kwargs["body"]["messages"][0]["content"]
+        self.assertIn("THIRD image is the real contents reference", parts[0]["text"])
+        self.assertIn("finish and texture against it", parts[0]["text"])
+        images = [base64.b64decode(part["image_url"]["url"].split(",", 1)[1]) for part in parts[1:]]
+        self.assertEqual(images, [png(), png("blue"), evidence])
+        self.assertEqual(result["problems"], [problem])
+
+    def test_no_swatch_styles_check_for_unapproved_contents(self):
+        for style in scene.STYLES:
+            with self.subTest(style=style):
+                _, post = self.check({"match": True}, style=style)
+                parts = post.call_args.kwargs["body"]["messages"][0]["content"]
+                self.assertEqual(len(parts), 3)
+                self.assertIn("ảnh có vẽ chất/màu sản phẩm không có trong ảnh thật", parts[0]["text"])
+
 
 class BuildImageTest(unittest.TestCase):
-    def run_build(self, payload, verdict):
+    def run_build(self, payload, verdict, fetch=lambda url: png()):
         describe = mock.Mock(return_value="- product 1: opacity: opaque")
         gen = mock.Mock(return_value=png("green", (40, 50)))
         check = mock.Mock(return_value=verdict)
         with mock.patch.object(postimage, "save", side_effect=lambda img, out: out):
-            cli.build_image(payload, "/tmp/x.jpg", CFG, fetch_bytes=lambda u: png(), gen=gen,
+            cli.build_image(payload, "/tmp/x.jpg", CFG, fetch_bytes=fetch, gen=gen,
                             describe=describe, check=check)
         return describe, gen, check
 
@@ -93,6 +116,34 @@ class BuildImageTest(unittest.TestCase):
             cli.build_image(payload, "/tmp/x.jpg", CFG, fetch_bytes=lambda u: png(), gen=mock.Mock(),
                             ai=False, describe=mock.Mock(), check=mock.Mock())
         self.assertNotIn("fidelity", payload)
+
+    def test_build_image_prefers_texture_and_falls_back_to_confirmed_swatch(self):
+        payload = {"product": {"product_id": "1", "image_url": "packshot"}, "draft": {}, "style": "k4",
+                   "evidence": {"texture": "texture", "swatch": "swatch"}}
+        for texture_available in (True, False):
+            with self.subTest(texture_available=texture_available):
+                def fetch(url):
+                    if url == "texture" and not texture_available:
+                        raise OSError("missing texture")
+                    return {"packshot": png(), "texture": png("blue"), "swatch": png("pink")}[url]
+
+                download = mock.Mock(side_effect=fetch)
+                _, gen, check = self.run_build(payload, {"match": True}, fetch=download)
+                expected = png("blue" if texture_available else "pink")
+                self.assertEqual(gen.call_args.kwargs["evidence"], expected)
+                self.assertEqual(check.call_args.kwargs["style"], "k4")
+                self.assertEqual(check.call_args.kwargs["evidence"], expected)
+                self.assertEqual(download.call_args_list, [mock.call("packshot"), mock.call("texture")]
+                                 + ([] if texture_available else [mock.call("swatch")]))
+                self.assertNotIn("image_note", payload)
+
+    def test_k4_without_evidence_records_the_note_and_sends_no_reference(self):
+        payload = {"product": {"product_id": "1", "image_url": "packshot"}, "draft": {}, "style": "k4"}
+        _, gen, check = self.run_build(payload, {"match": True})
+        self.assertNotIn("evidence", gen.call_args.kwargs)
+        self.assertIsNone(check.call_args.kwargs["evidence"])
+        self.assertIn("🫧 Shop không có ảnh chất thật của sản phẩm này, nên ảnh không vẽ chất kem "
+                      "(không để AI tự bịa).", cli.image_review_notes(payload))
 
 
 class CardWarningTest(unittest.TestCase):

@@ -117,8 +117,6 @@ max_per_post = 3         # first image + two ✏️ edits
 #                  Sign in once with `python3 -m babebasket gemini-login`. Needs a GUI session.
 # 🏪 k0 = in the store · 🎨 k1 = flat lay · 🤲 k3 = close-up hand · 🫧 k4 = texture
 default_style = "k0"
-texture_categories = ["Bodylotion & Hautcreme", "Handcreme & Handmasken", "Gesichtspflege",
-                      "Körperpeeling & Body Scrub", "Haarkur & Haarmaske", "Sonnenpflege", "Körperöl"]
 backend = "gemini_web"    # needs `check` in the GUI session (LaunchAgent), never over SSH
 
 [image.gemini_web]
@@ -127,3 +125,41 @@ timeout = 180            # seconds to wait for Gemini's image
 daily_cap = 30           # Gemini images per day, across runs (~/.babebasket/gemini-daily-count.json)
 min_gap = 5              # random pause between images, seconds
 max_gap = 10
+
+# First matching rule wins. max_photos includes the hero image.
+[[photos.rule]]
+name = "gift set"
+name_regex = 'geschenk|gift\s*set|\bset\b|adventskalender'
+categories = ["Geschenksets"]
+kinds = ["packshot", "contents"]
+max_photos = 3
+
+[[photos.rule]]
+name = "makeup"
+groups = ["makeup"]
+kinds = ["lip_swatch", "skin_swatch", "shade_range", "application", "texture"]
+max_photos = 4
+
+[[photos.rule]]
+name = "cream"
+categories = ["Bodylotion & Hautcreme", "Handcreme & Handmasken", "Gesichtspflege",
+              "Körperpeeling & Body Scrub", "Haarkur & Haarmaske", "Sonnenpflege", "Körperöl"]
+kinds = ["texture"]
+max_photos = 2
+
+[[photos.rule]]
+name = "fragrance"
+llm_kinds = ["fragrance"]
+kinds = ["packshot"]
+max_photos = 2
+
+[[photos.rule]]
+name = "supplement"
+llm_kinds = ["supplement"]
+kinds = ["label"]
+max_photos = 2
+
+[[photos.rule]]
+name = "default"
+kinds = []
+max_photos = 1

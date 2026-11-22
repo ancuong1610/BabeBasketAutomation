@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from babebasket import cli, db, discord, threads
@@ -67,9 +68,9 @@ class FlowTest(unittest.TestCase):
         r = self.conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
         return r["status"], json.loads(r["payload"])
 
-    def decide(self, decision, feedback="", last_id=None, unreadable=False, cfg=CFG):
+    def decide(self, decision, feedback="", last_id=None, unreadable=False, cfg=CFG, attachments=None):
         notes = {"text": feedback, "last_id": last_id or ("R1" if feedback or unreadable else None),
-                 "unreadable": unreadable}
+                 "unreadable": unreadable, "messages": [{"content": feedback, "attachments": attachments}] if feedback else []}
         taps = {"reject": {"❌"}, "accept": {"✅"}, "edit": {"✏️"}, "text": {"🔤"}}.get(decision, set())
         with mock.patch.object(discord, "image_taps", return_value=taps), \
                 mock.patch.object(discord, "read_image_feedback", return_value=notes) as fb:
@@ -319,7 +320,8 @@ class ReadFeedbackTest(unittest.TestCase):
         with mock.patch.object(discord, "_call", return_value=msgs) as call:
             notes = discord.read_image_feedback("CH", "IMG", ["42"], after="10")
         self.assertIn("after=10", call.call_args.args[1])
-        self.assertEqual(notes, {"text": "to hơn / nền sáng hơn", "last_id": "12", "unreadable": False})
+        self.assertEqual(notes, {"text": "to hơn / nền sáng hơn", "last_id": "12", "unreadable": False,
+                                 "messages": [msgs[1], msgs[0]]})
 
     def test_plain_message_counts_only_when_allowed(self):
         msgs = [{"id": "11", "content": "làm sản phẩm to ra", "author": {"id": "42"}}]
@@ -329,11 +331,14 @@ class ReadFeedbackTest(unittest.TestCase):
                              "làm sản phẩm to ra")
 
     def test_reply_to_the_caption_card_counts(self):
-        msgs = [{"id": "11", "content": "tay cầm sản phẩm", "author": {"id": "42"},
+        attachment = {"filename": "my-photo.jpg", "url": "https://cdn/photo"}
+        msgs = [{"id": "11", "content": "thêm", "author": {"id": "42"}, "attachments": [attachment],
                  "message_reference": {"message_id": "CAP"}}]
         with mock.patch.object(discord, "_call", return_value=msgs):
             self.assertEqual(discord.read_image_feedback("CH", "IMG", [])["text"], "")
-            self.assertEqual(discord.read_image_feedback("CH", "IMG", [], also=("CAP",))["text"], "tay cầm sản phẩm")
+            notes = discord.read_image_feedback("CH", "IMG", [], also=("CAP",))
+            self.assertEqual(notes["text"], "thêm")
+            self.assertEqual(notes["messages"][0]["attachments"], [attachment])
 
     def test_empty_content_means_intent_missing(self):
         msgs = [{"id": "11", "content": "", "author": {"id": "42"}, "message_reference": {"message_id": "IMG"}}]
@@ -370,6 +375,136 @@ class ImageDecisionTest(unittest.TestCase):
             self.assertEqual(react.call_args.args[2], ["✅", "❌", "✏️", "🔤"])
             discord.post_image_card("CH", {}, "x.jpg", edits_left=0)
             self.assertEqual(react.call_args.args[2], ["✅", "❌", "🔤"])
+
+
+class PhotoSetReplyTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from tests.test_gift_photos import png_rgba
+
+        tmp = self.enterContext(tempfile.TemporaryDirectory(prefix="photo set "))
+        self.data = Path(tmp)
+        self.hero = self.data / "hero.jpg"
+        self.hero.write_bytes(b"exact-hero-bytes")
+        self.conn = db.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        self.draft_id = caption_approved(self.conn)
+        self.gallery = ["https://shop/pack.jpg", "https://shop/p2.jpg", "https://shop/p3.jpg"]
+        payload = self.state()[1]
+        payload["product"]["gallery"] = self.gallery
+        payload.update(image_path=str(self.hero), image_source="gemini", image_versions=3, image_message_id="IMG1",
+                       supporting=[self.gallery[1]], supporting_attached=1, photo_rule="default")
+        db.set_payload(self.conn, self.draft_id, payload)
+        db.log_image_call(self.conn, self.draft_id, True)
+        db.set_status(self.conn, self.draft_id, "image_pending")
+        self.enterContext(mock.patch.object(cli, "DATA", self.data))
+        self.enterContext(mock.patch.object(cli, "fetch_bytes", return_value=png_rgba()))
+        self.enterContext(mock.patch.object(discord, "image_taps", return_value={"✅", "✏️"}))
+        self.reply = self.enterContext(mock.patch.object(discord, "reply"))
+        self.build = self.enterContext(mock.patch.object(cli, "build_image"))
+        self.post = self.enterContext(mock.patch.object(discord, "post_image_card", return_value="IMG2"))
+
+    def state(self):
+        row = self.conn.execute("SELECT status, payload FROM drafts WHERE id = ?", (self.draft_id,)).fetchone()
+        return row["status"], json.loads(row["payload"])
+
+    def command(self, content, attachment=None, *, reply_to="IMG1"):
+        message = {"id": "123", "content": content, "author": {"id": "42"},
+                   "message_reference": {"message_id": reply_to}, "attachments": [attachment] if attachment else []}
+        with mock.patch.object(discord, "_call", return_value=[message]):
+            cli.cmd_check_images(CFG, self.conn)
+
+    def assert_reposted(self, supporting_count):
+        self.build.assert_not_called()
+        self.assertEqual(db.image_calls_for(self.conn, self.draft_id), 1)
+        status, payload = self.state()
+        self.assertEqual(status, "image_pending")
+        self.assertEqual(payload["image_versions"], 3)
+        self.assertEqual(payload["image_message_id"], "IMG2")
+        self.assertEqual(payload["supporting_attached"], supporting_count)
+        channel, card, path, edits_left, extra = self.post.call_args.args
+        self.assertEqual((channel, path, edits_left), ("CH", str(self.hero), 1))
+        self.assertEqual(len(extra), supporting_count)
+        self.assertEqual(len(card["attachments"]), supporting_count + 1)
+        self.assertEqual(len(card["embeds"]), supporting_count + 1)
+        self.assertIn(f"📎 Đã cập nhật bộ ảnh: {supporting_count + 1} ảnh.", card["content"])
+        self.assertEqual(self.reply.call_args.args[:2], ("CH", "IMG1"))
+        self.assertIn("Thẻ này đã được thay", self.reply.call_args.args[2])
+        return payload
+
+    def test_them_anh_uses_caption_gallery_number_and_reuses_the_hero(self):
+        self.command("thêm ảnh 3", reply_to="CAPTION")
+        self.assertEqual(self.assert_reposted(2)["supporting"], self.gallery[1:])
+
+    def test_bo_anh_uses_image_card_number_and_reuses_the_hero(self):
+        self.command("bo anh 2")
+        self.assertEqual(self.assert_reposted(0)["supporting"], [])
+
+    def test_attachment_is_saved_as_local_jpeg_and_attached(self):
+        self.command("thêm ảnh này nha", {"filename": "owner.png", "url": "https://cdn/owner.png?signature=x"})
+        payload = self.assert_reposted(2)
+        photo, = (self.data / "sources").glob("*.jpg")
+        self.assertEqual(payload["supporting"], [self.gallery[1], photo.resolve().as_uri()])
+        self.assertEqual(photo.read_bytes()[:3], b"\xff\xd8\xff")
+
+    def test_khong_anh_phu_reposts_without_extras(self):
+        self.command("không ảnh phụ nha")
+        self.assertEqual(self.assert_reposted(0)["supporting"], [])
+
+    def test_bad_numbers_and_the_hero_leave_the_card_and_photos_in_place(self):
+        for command, notice in (("them anh 9", "Shop không có ảnh số 9"), ("bỏ ảnh 8", "Bộ ảnh không có ảnh số 8"),
+                                ("bỏ ảnh 1", "Ảnh 1 là ảnh chính")):
+            with self.subTest(command=command):
+                self.command(command)
+                status, payload = self.state()
+                self.assertEqual((status, payload["image_message_id"], payload["supporting"]),
+                                 ("image_pending", "IMG1", [self.gallery[1]]))
+                self.assertIn(notice, self.reply.call_args.args[2])
+        self.post.assert_not_called()
+        self.build.assert_not_called()
+
+    def test_limit_is_ten_photos_including_the_hero(self):
+        payload = self.state()[1]
+        payload.update(supporting=[f"https://shop/{i}.jpg" for i in range(9)], supporting_attached=9)
+        db.set_payload(self.conn, self.draft_id, payload)
+        self.command("them anh 1")
+        self.post.assert_not_called()
+        self.assertIn("đủ 10 ảnh", self.reply.call_args.args[2])
+        self.command("bỏ ảnh 10")
+        self.assertEqual(self.assert_reposted(8)["supporting"], payload["supporting"][:-1])
+
+    def test_failed_resend_leaves_old_card_and_retries_without_an_ai_call(self):
+        self.post.side_effect = [RuntimeError("Discord down"), "IMG2"]
+        self.command("them anh 3")
+        payload = self.state()[1]
+        self.assertEqual(payload["image_message_id"], "IMG1")
+        self.assertEqual(payload["supporting"], [self.gallery[1]])
+        self.assertNotIn("feedback_seen", payload)
+        self.command("them anh 3")
+        self.assertEqual(self.assert_reposted(2)["supporting"], self.gallery[1:])
+
+    def test_two_removals_use_the_numbers_on_the_old_card(self):
+        payload = self.state()[1]
+        payload.update(supporting=self.gallery, supporting_attached=3)
+        db.set_payload(self.conn, self.draft_id, payload)
+        messages = [{"id": str(i), "content": f"bỏ ảnh {i}", "author": {"id": "42"},
+                     "message_reference": {"message_id": "IMG1"}} for i in (2, 3)]
+        with mock.patch.object(discord, "_call", return_value=messages):
+            cli.cmd_check_images(CFG, self.conn)
+        self.assertEqual(self.assert_reposted(1)["supporting"], [self.gallery[2]])
+
+    def test_approval_publishes_attachments_from_the_replacement_card(self):
+        self.command("thêm ảnh 3")
+        urls = ["https://cdn/hero", "https://cdn/photo1", "https://cdn/photo2"]
+        with mock.patch.object(discord, "_call", return_value=[]), \
+                mock.patch.object(discord, "card_image_urls", return_value=urls) as card_urls, \
+                mock.patch.object(threads, "maybe_refresh", return_value=False), \
+                mock.patch.object(threads, "publish", return_value={"id": "T", "permalink": "https://t/p"}) as publish:
+            cli.cmd_check_images(CFG, self.conn)
+            cli.cmd_publish(CFG, self.conn)
+        card_urls.assert_called_once_with("CH", "IMG2")
+        publish.assert_called_once_with("Caption một", urls[0], extra_images=urls[1:])
+
 
 if __name__ == "__main__":
     unittest.main()

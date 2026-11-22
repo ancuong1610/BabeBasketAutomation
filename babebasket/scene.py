@@ -24,6 +24,13 @@ Do not redesign, translate or invent anything on the packaging. Exactly as many 
 - Product sharp, front label facing the camera and readable, fully visible, not cropped."""
 NO_ADDED_TEXT = "- Do not add any text, captions, stickers, logos, watermarks or price tags."
 TEXT_SPACE = "- Keep the top 20% and the bottom 24% of the image calm, because text will be added there later.\n"
+CLOSED_PACKAGING = ("- Show only the CLOSED packaging. Never show the product opened, applied, dripping or swatched. "
+                    "No cream, gel, colour on skin or lips, smears or drops of the product's contents. "
+                    "Contents visible through the closed packaging must match the official photo exactly.")
+REAL_SWATCH = ("- The {position} attached image is a real photo of this product's contents. The swatch next to the "
+               "product must copy its colour, shade, thickness, finish and texture exactly. Do not invent another "
+               "colour or texture. Show a single swatch on the surface, with no product applied to skin or lips. "
+               "Keep the packaging closed and match any contents visible through it to the official photo.")
 
 PROMPT = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
 
@@ -36,6 +43,7 @@ palm about 7 cm wide, natural short nails, no jewellery.{size}
 
 Hard rules:
 {packaging_rules}
+""" + CLOSED_PACKAGING + """
 - Put the product in the CENTRE of the image horizontally. It fills about 45-55% of the image width \
 and sits between about 22% and 74% of the image height.
 - Keep the top 20% and the bottom 24% of the image calm (soft blurred shelf, no busy details), \
@@ -59,12 +67,13 @@ Hard rules (they win over any request above):
 colours, brand, logo and label text. Do not redesign, translate or invent anything on the packaging.
 - Show exactly as many items as in the original packshot, keeping their true relative sizes.
 - Product sharp, front label facing the camera, fully visible, not cropped, centred horizontally.
+{contents_rule}
 {text_space}{no_added_text}
 - Vertical 4:5 photo."""
 
 PAIR_SCENE_NOTE = (
     "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
-    "Show BOTH: two hands of the same woman, each holding one bottle side by side, both front labels "
+    "Show BOTH: two hands of the same woman, each holding one closed bottle side by side, both front labels "
     "fully visible and unchanged. Two bottles, not one. Keep their true relative sizes (as in the attached image; "
     "a 1,000 ml bottle is far bigger than a 200 ml one). Together they take the central product area described above."
 )
@@ -84,6 +93,7 @@ realistic high-end product photography, slightly saturated colours.
 
 Hard rules:
 {packaging_rules}
+""" + CLOSED_PACKAGING + """
 - SIZE: the product is large. It fills about 60-70% of the image width (a tall bottle or tube instead \
 fills about 70-80% of the image height). A small product far away on a big empty background is wrong.
 - Put the product exactly in the CENTRE of the image, horizontally and vertically. \
@@ -93,7 +103,7 @@ Props are few and small, only at the left and right edges, partly cut off by the
 
 PAIR_SCENE_NOTE_K1 = (
     "\n\nThe attached image shows TWO products: a shampoo and its matching conditioner, sold as a set. "
-    "Show BOTH bottles, lying next to each other on the surface, both front labels fully visible and "
+    "Show BOTH closed bottles, lying next to each other on the surface, both front labels fully visible and "
     "unchanged. Two bottles, not one. Keep their true relative sizes as in the attached image. "
     "Together they take the central product area described above."
 )
@@ -109,30 +119,30 @@ high-end, realistic product photo.
 
 Hard rules:
 {packaging_rules}
+""" + CLOSED_PACKAGING + """
 - Keep the product large and centred, about 55-65% of the image width, with a sharp label.
 {no_added_text}"""
 
 PAIR_SCENE_NOTE_K3 = (
     "\n\nShow the shampoo and its matching conditioner side by side: two hands of the same woman, each holding one "
-    "bottle. Two bottles, not one. Keep their true relative sizes as in the attached image."
+    "closed bottle. Two bottles, not one. Keep their true relative sizes as in the attached image."
 )
 
 PROMPT_K4 = """Create a vertical 4:5 photo for an Instagram post of a small German drugstore reseller.
 
 Use the product in the attached image: {product}.
 Scene: a top-down or slightly angled shot with the product standing or lying on a light marble or \
-pastel surface. Put a generous swatch or smear of its own contents (cream, gel, lotion, oil or gloss) \
-beside it, showing the real texture and colour. Use the packaging facts and product name to judge what \
-is inside: for example pearly liquid for shampoo, white fluid lotion for body lotion, or clear gel. \
-Keep the product large and centred.
+pastel surface. Keep the product large and centred.{texture_scene}
 
 Hard rules:
 {packaging_rules}
+{contents_rule}
 {no_added_text}"""
 
 PAIR_SCENE_NOTE_K4 = (
-    "\n\nShow both bottles side by side with one swatch beside them. Two bottles, not one. "
-    "Keep their true relative sizes as in the attached image."
+    "\n\nShow both closed bottles side by side. Two bottles, not one. "
+    "Keep their true relative sizes as in the attached image. If a real contents reference is attached, "
+    "it is for the first product only. Never show the second product's contents outside its packaging."
 )
 
 STYLE_PROMPTS = {
@@ -198,22 +208,26 @@ DESCRIBE_PROMPT = """You see the official photo of a drugstore product (or two p
 An image model must reproduce the packaging EXACTLY in a new photo. Describe what it must get right.
 Be concrete about whether the container is opaque or see-through: iridescent, pearlescent or metallic
 finishes are usually OPAQUE coatings, not clear plastic.
+For contents_visible, describe colour and texture only if visible in the official photo (e.g. through a transparent
+bottle or tinted tube). Otherwise return "not visible". Never guess what is inside.
 Return only JSON:
 {"products": [{"container": "e.g. pump bottle / squeeze tube / flip-cap bottle / jar",
                "opacity": "opaque or transparent, and what that looks like",
                "body_colour_and_finish": "...", "cap_or_pump": "colour, material, shape",
-               "label": "main colours and layout of the front label", "other": "anything distinctive"}]}"""
+               "label": "main colours and layout of the front label", "contents_visible": "...",
+               "other": "anything distinctive"}]}"""
 
 PACKAGING_NOTE = ("\n\nPackaging facts read from the real product photo. Reproduce them exactly; they "
                   "override any idea of what such a product usually looks like:\n{facts}")
 
 CHECK_PROMPT = """The FIRST image is the official photo of the real product(s). The SECOND is an AI-made photo
-that must show the same product(s). Compare only the packaging: container shape, opaque vs transparent,
+that must show the same product(s). Compare the packaging: container shape, opaque vs transparent,
 body colour and finish, cap/pump colour and shape, label layout, brand and product name.
 Ignore background, hand, lighting, angle and size. Small blur is fine. Tiny small-print typos are
 not worth flagging; wrong brand/product names are.{facts}
+{contents_check}
 Return only JSON: {"match": true or false, "problems": ["short problem in Vietnamese", ...]}
-"match" is false only for differences a customer would notice when the real product arrives."""
+Set "match" to false for any of the contents problems described above or a packaging difference a customer would notice."""
 
 
 def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[..., dict], api_key: str | None,
@@ -251,13 +265,24 @@ def describe_packaging(packshot: bytes, cfg: dict, post: Callable[..., dict] = r
 
 
 def check_fidelity(packshot: bytes, generated: bytes, cfg: dict, post: Callable[..., dict] = request_json,
-                   api_key: str | None = None, facts: str = "") -> dict:
-    """{'match': bool, 'problems': [...]} comparing the AI photo with the real packaging.
+                   api_key: str | None = None, facts: str = "", *, style: str | None = None,
+                   evidence: bytes | None = None) -> dict:
+    """{'match': bool, 'problems': [...]} comparing the AI photo with the real product photos.
     If the check itself fails, returns match True with no problems (the owner still reviews the image)."""
+    images = [packshot, generated]
+    if resolve_style(cfg.get("image", {}), style) == "k4" and evidence:
+        images.append(evidence)
+        contents_check = ("The THIRD image is the real contents reference. Compare the AI swatch's colour, shade, "
+                          "thickness, finish and texture against it. Flag differences, e.g. 'màu chất kem khác ảnh thật'. "
+                          "Flag a missing swatch, invented contents anywhere else, applied product or opened packaging.")
+    else:
+        contents_check = ("Flag any opened packaging, visible swatch, applied product or product contents outside "
+                          "the closed packaging, e.g. 'ảnh có vẽ chất/màu sản phẩm không có trong ảnh thật'. "
+                          "Contents visible through closed packaging must match the official photo.")
     try:
         known = f"\nFacts about the real packaging (trust these over your reading of the first image):\n{facts}" if facts else ""
-        data = _vision_json(CHECK_PROMPT.replace("{facts}", known), [packshot, generated], cfg, post, api_key,
-                            stage="fidelity")
+        prompt = CHECK_PROMPT.replace("{facts}", known).replace("{contents_check}", contents_check)
+        data = _vision_json(prompt, images, cfg, post, api_key, stage="fidelity")
     except Exception as err:
         print(f"scene: fidelity check failed: {err}", file=sys.stderr)
         return {"match": True, "problems": [], "checked": False}
@@ -297,6 +322,7 @@ def generate(
     facts: str = "",
     *,
     style: str | None = None,
+    evidence: bytes | None = None,
 ) -> bytes | None:
     image_cfg = cfg.get("image", {})
     if not image_cfg.get("enabled", True):
@@ -311,33 +337,39 @@ def generate(
     product_name = f"{product.get('brand', '')} {product.get('name', '')}".strip()
     if pair:
         product_name += f" + {pair.get('name', '')}"
-    if feedback and previous:
-        content = [
-            {"type": "text", "text": EDIT_PROMPT.format(feedback=feedback, no_added_text=NO_ADDED_TEXT,
-                                                       text_space=TEXT_SPACE if has_text(style) else "")
-             + (PACKAGING_NOTE.format(facts=facts) if facts else "")},
-            {"type": "image_url", "image_url": {"url": data_url(previous)}},
-            {"type": "image_url", "image_url": {"url": data_url(packshot)}},
-        ]
+    editing = bool(feedback and previous)
+    evidence = evidence if style == "k4" else None
+    contents_rule = REAL_SWATCH.format(position="THIRD" if editing else "SECOND") if evidence else CLOSED_PACKAGING
+    if editing:
+        if not evidence:
+            contents_rule += " Remove any existing swatch or exposed contents from the first image."
+        text = EDIT_PROMPT.format(feedback=feedback, no_added_text=NO_ADDED_TEXT, contents_rule=contents_rule,
+                                  text_space=TEXT_SPACE if has_text(style) else "")
+        images = [previous, packshot]
     else:
         prompt, pair_note = STYLE_PROMPTS[style]
         size = size_hint(product.get("name", "")) if style in ("k0", "k3") and not pair else ""
+        subject = "both closed bottles" if pair else "the product"
         text = prompt.format(product=product_name, size=size, packaging_rules=PACKAGING_RULES,
-                             no_added_text=NO_ADDED_TEXT) + (pair_note if pair else "")
-        text += (PACKAGING_NOTE.format(facts=facts) if facts else "") \
-            + (FEEDBACK_NOTE.format(feedback=feedback) if feedback else "")
-        content = [
-            {"type": "text", "text": text},
-            {"type": "image_url", "image_url": {"url": data_url(packshot)}},
-        ]
+                             no_added_text=NO_ADDED_TEXT, contents_rule=contents_rule,
+                             texture_scene=f" Show only {subject} with no swatch." if not evidence else "")
+        if pair:
+            text += pair_note
+        images = [packshot]
+    if evidence:
+        images.append(evidence)
+    if facts:
+        text += PACKAGING_NOTE.format(facts=facts)
+    if feedback and not editing:
+        text += FEEDBACK_NOTE.format(feedback=feedback)
     if image_cfg.get("backend", "openrouter") == "gemini_web":  # free: the owner's Gemini in Chrome
         from babebasket import gemini_web
 
-        text = content[0]["text"].replace("4:5", gemini_web._cfg(cfg)["ratio"])
-        images = [previous, packshot] if feedback and previous else [packshot]
-        return gemini_web.generate_image(images, text, cfg)
+        return gemini_web.generate_image(images, text.replace("4:5", gemini_web._cfg(cfg)["ratio"]), cfg)
     from babebasket import usage
 
+    content = [{"type": "text", "text": text}] + [
+        {"type": "image_url", "image_url": {"url": data_url(img)}} for img in images]
     body = {
         **usage.REQUEST,
         "model": image_cfg.get("model", "google/gemini-3.1-flash-image"),
@@ -368,18 +400,19 @@ def generate(
 
 # --- supporting shop photos ---------------------------------------------------------------
 PHOTO_TYPES = ("product_hero", "product_detail", "shade_range", "skin_swatch", "lip_swatch", "texture",
-               "application", "duplicate", "irrelevant", "uncertain")
+               "application", "contents", "label", "duplicate", "irrelevant", "uncertain")
+SHADE_PHOTO_TYPES = ("lip_swatch", "skin_swatch", "texture", "application")
 SUPPORT_PROMPT = """These photos come from the shop page of one product: {product}.
 Label every photo, numbered in the order given (1 = first photo). Types:
 product_hero (the pack itself), product_detail (close-up of the pack or applicator), shade_range (many shades
 side by side), skin_swatch (colour on arm/hand skin), lip_swatch (colour on lips), texture (the product itself
-smeared or close up), application (a person wearing or applying it), duplicate (same as an earlier photo),
-irrelevant (logos, text-only, unrelated), uncertain.
-For swatch, texture and application photos also say whether they show THIS product's shade ({shade}):
-true, false (another shade), or null (cannot tell / no shade named).
+smeared or close up), application (a person wearing or applying it), contents (the items inside this set or kit laid out),
+label (readable ingredient, nutrition or dosage panel), duplicate (same as an earlier photo), irrelevant (logos,
+unrelated text, unrelated product), uncertain.
+For swatch, texture and application photos, say whether they show the contents of THIS exact product ({shade}):
+true (confirmed same product and shade, even if the shade is unnamed), false (another product or shade),
+or null (cannot tell). Being in this gallery alone is not proof that the contents match.
 Reply with JSON only: {{"photos": [{{"i": 1, "type": "...", "this_shade": true}}]}}"""
-SUPPORT_ORDER = ("lip_swatch", "skin_swatch", "application", "texture", "shade_range")  # most useful first
-MAX_SUPPORTING = 3
 
 
 def shade_of(name: str) -> str:
@@ -388,41 +421,30 @@ def shade_of(name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def pick_supporting(labels: list[dict], photos: list[str], kinds: tuple[str, ...] = SUPPORT_ORDER,
-                    limit: int = MAX_SUPPORTING) -> list[str]:
-    """Choose up to `limit` shop photos in the order of `kinds`, excluding other shades."""
-    by_type: dict[str, list[str]] = {}
-    for item in labels:
+def classify_gallery(product: dict, cfg: dict, fetch: Callable[[str], bytes], post: Callable[..., dict] = request_json,
+                     api_key: str | None = None) -> list[dict]:
+    """Classify the extra shop photos in gallery order in one vision call. The first photo is the packshot."""
+    photos = (product.get("gallery") or [])[1:]
+    if not photos:
+        return []
+    images = [fetch(small_jpg(url, 400)) for url in photos]
+    prompt = SUPPORT_PROMPT.format(product=f"{product.get('brand', '')} {product.get('name', '')}",
+                                   shade=shade_of(product.get("name", "")) or "shade not named")
+    data = _vision_json(prompt, images, cfg, post, api_key, stage="gallery")
+    classified = {}
+    for item in data.get("photos") or []:
+        if not isinstance(item, dict):
+            continue
         try:
             i = int(item.get("i")) - 1
         except (TypeError, ValueError):
             continue
         kind = item.get("type")
-        if not 0 <= i < len(photos) or kind not in kinds:
-            continue
-        if kind != "shade_range" and item.get("this_shade") is False:
-            continue  # a swatch of another shade would mislead the buyer
-        by_type.setdefault(kind, []).append(photos[i])
-    out: list[str] = []
-    for kind in kinds:
-        for url in by_type.get(kind, [])[: 1 if kind == "shade_range" else 2]:
-            if url not in out:
-                out.append(url)
-    return out[:limit]
-
-
-def select_supporting(product: dict, cfg: dict, fetch: Callable[[str], bytes], post: Callable[..., dict] = request_json,
-                      api_key: str | None = None, *, kinds: tuple[str, ...] = SUPPORT_ORDER,
-                      limit: int = MAX_SUPPORTING) -> list[str]:
-    """One vision call over the product page's extra photos (small JPEGs); returns the photo links to post."""
-    photos = (product.get("gallery") or [])[1:7]  # the first is the packshot the AI image is made from
-    if not photos:
-        return []
-    images = [fetch(small_jpg(u, 400)) for u in photos]
-    data = _vision_json(SUPPORT_PROMPT.format(product=f"{product.get('brand', '')} {product.get('name', '')}",
-                                              shade=shade_of(product.get("name", "")) or "not named"),
-                        images, cfg, post, api_key, stage="gallery")
-    return [small_jpg(u, 1200) for u in pick_supporting(data.get("photos") or [], photos, kinds, limit)]
+        if 0 <= i < len(photos) and kind in PHOTO_TYPES:
+            shade = item.get("this_shade")
+            classified.setdefault(i, {"url": small_jpg(photos[i], 1200), "type": kind,
+                                      "this_shade": shade if isinstance(shade, bool) else None})
+    return [classified[i] for i in sorted(classified)]
 
 
 def small_jpg(url: str, size: int) -> str:

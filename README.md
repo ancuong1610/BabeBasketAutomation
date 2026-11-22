@@ -60,14 +60,32 @@ On an older card, add a style emoji as a reaction yourself.
 - 🏪 **K0 · In the store** (default) shows the product in a drugstore aisle with the title, points, and logo.
 - 🎨 **K1 · Flat lay** shows the product on a pastel surface with a few small props.
 - 🤲 **K3 · Close-up hand** shows the product held against a soft studio gradient.
-- 🫧 **K4 · Texture** shows the product beside a swatch of its contents.
+- 🫧 **K4 · Texture** shows the product on a marble or pastel surface. A real shop photo of the contents is required for a swatch.
 
 K1, K3, and K4 get the round logo only. The plain fallback image keeps the usual text and logo.
 
-Most posts have one image. Products in the configured texture categories, such as creams and
-lotions, can have two if the shop has a texture photo. Makeup can have up to four, including
-three shop photos of the shade. The image card previews any extras under the main image.
-Reply "không ảnh phụ" to post the main image alone.
+### Bộ ảnh của bài
+
+Ảnh chính đứng đầu. Bot dùng quy tắc khớp đầu tiên trong `[[photos.rule]]` để chọn ảnh thật từ shop.
+
+| Sản phẩm | Ảnh phụ theo thứ tự ưu tiên | Tổng ảnh tối đa |
+|---|---|---|
+| Bộ quà tặng | Ảnh gốc của shop, ảnh các món bên trong bộ | 3 |
+| Đồ trang điểm | Màu trên môi, màu trên da, bảng màu, ảnh khi dùng, ảnh chất sản phẩm | 4 |
+| Kem và các danh mục trong cấu hình | Ảnh chất sản phẩm | 2 |
+| Nước hoa | Ảnh gốc của shop | 2 |
+| Thực phẩm bổ sung | Ảnh nhãn thành phần, dinh dưỡng hoặc liều dùng | 2 |
+| Cặp gội xả và các sản phẩm còn lại | — | 1 |
+
+🏪 K0, 🎨 K1 và 🤲 K3 chỉ vẽ bao bì đóng. 🫧 K4 chỉ vẽ chất sản phẩm khi có ảnh thật của đúng sản phẩm
+và đúng màu để đối chiếu. Khi thiếu ảnh thật, K4 chỉ vẽ sản phẩm trên nền marble hoặc pastel.
+
+Reply vào thẻ ảnh hoặc thẻ caption để cập nhật bộ ảnh mà vẫn giữ nguyên ảnh chính. Mỗi bài có tối đa 10 ảnh.
+
+- `thêm ảnh N` hoặc `them anh N` lấy ảnh số N trong thư viện của shop, theo thứ tự trên thẻ caption.
+- `bỏ ảnh N` hoặc `bo anh N` bỏ ảnh theo thứ tự trên thẻ ảnh. Ảnh số 1 luôn được giữ lại.
+- Gửi ảnh đính kèm cùng chữ `thêm` để thêm ảnh đó vào cuối bộ.
+- `không ảnh phụ` giữ lại ảnh chính. Bấm ✅ trên thẻ ảnh mới sau khi kiểm tra bộ ảnh.
 
 ## Setup on the Mac mini
 
@@ -180,12 +198,6 @@ young workers buying self-care consumables. Each day 10 drafts, by group (`[grou
 | body | 3 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.0★, 10 reviews |
 | extra | 2 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
 | makeup | 1 | coloured lip make-up: lipstick, lip gloss, lip oil/tint, lip liner | 4.0★, 10 reviews |
-
-**Makeup posts are carousels.** When a makeup caption is approved, one vision call labels the
-product page's extra photos (lip/skin swatch, shade range, texture, application…) and picks up to
-3 that show *this* shade (never a swatch of another shade). The image card shows them in a grid
-under the AI image; they are posted unchanged after it in the same multi-photo post. Reply
-"không ảnh phụ" to the image card to post the AI image alone.
 
 If a group has nothing good enough that day, the best of the others fills the gap.
 

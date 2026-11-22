@@ -238,7 +238,8 @@ class TextOnlyEditTest(unittest.TestCase):
             payload.update(image_message_id="IMG1", scene_path=str(scene), image_source="gemini", image_versions=1)
             db.set_payload(conn, draft_id, payload)
             db.set_status(conn, draft_id, "image_pending")
-            notes = {"text": "Tiêu đề mới\nÝ mới", "last_id": "R1", "unreadable": False}
+            notes = {"text": "Tiêu đề mới\nÝ mới", "last_id": "R1", "unreadable": False,
+                     "messages": [{"content": "Tiêu đề mới\nÝ mới"}]}
             with mock.patch.object(cli, "DATA", Path(tmp)), \
                     mock.patch.object(discord, "image_taps", return_value={"🔤"}), \
                     mock.patch.object(discord, "read_image_feedback", return_value=notes), \
@@ -266,7 +267,8 @@ class TextOnlyEditTest(unittest.TestCase):
 
         for text in ("", "Tiêu đề mới"):
             with self.subTest(text=text):
-                notes = {"text": text, "last_id": "R1" if text else None, "unreadable": False}
+                notes = {"text": text, "last_id": "R1" if text else None, "unreadable": False,
+                         "messages": [{"content": text}] if text else []}
                 with mock.patch.object(discord, "image_taps", return_value={"🔤"}), \
                         mock.patch.object(discord, "read_image_feedback", return_value=notes), \
                         mock.patch.object(discord, "post_image_card") as post, \

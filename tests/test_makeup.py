@@ -8,6 +8,7 @@ from unittest import mock
 from PIL import Image
 
 from babebasket import catalog, cli, db, discord, scene, threads
+from tests.test_gift_photos import PHOTO_CFG, photo
 
 G = "https://products.dm-static.com/images/f_auto,q_auto,c_fit,h_1200,w_1200/v1/assets/pas/images/{}/x"
 LIPGLOSS = {"store": "dm", "product_id": "L1", "brand": "Maybelline New York", "group": "makeup",
@@ -36,40 +37,30 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(scene.shade_of("Lipgloss Lifter Gloss 005 Petal, 5,4 ml"), "005 Petal")
         self.assertEqual(scene.shade_of("Shampoo Repair, 250 ml"), "")
 
-    def test_swatches_of_this_shade_first_never_another_shade(self):
-        photos = ["p2", "p3", "p4", "p5", "p6"]
-        labels = [{"i": 1, "type": "shade_range"}, {"i": 2, "type": "lip_swatch", "this_shade": False},
-                  {"i": 3, "type": "skin_swatch", "this_shade": True}, {"i": 4, "type": "lip_swatch", "this_shade": True},
-                  {"i": 5, "type": "product_detail"}]
-        self.assertEqual(scene.pick_supporting(labels, photos), ["p5", "p4", "p2"])
-        self.assertEqual(scene.pick_supporting([{"i": 9, "type": "lip_swatch"}, {"i": "x"}], photos), [])
-
-    def test_one_vision_call_with_small_jpegs_returns_large_jpegs(self):
-        fetched, sent = [], {}
+    def test_one_vision_call_with_small_jpegs_returns_labels_in_gallery_order(self):
+        fetched, sent = [], []
 
         def post(url, **kw):
-            sent["images"] = len(kw["body"]["messages"][0]["content"]) - 1
-            return {"choices": [{"message": {"content": json.dumps(
-                {"photos": [{"i": 2, "type": "lip_swatch", "this_shade": True}]})}}]}
+            sent.append(kw["body"]["messages"][0]["content"])
+            labels = [{"i": 3, "type": "label"}, {"i": 9, "type": "lip_swatch"}, {"i": "x"},
+                      {"i": 2, "type": "lip_swatch", "this_shade": False}, {"i": 1, "type": "contents"}]
+            return {"choices": [{"message": {"content": json.dumps({"photos": labels})}}]}
 
-        out = scene.select_supporting(LIPGLOSS, {}, lambda u: fetched.append(u) or jpg(), post, "k")
+        out = scene.classify_gallery(LIPGLOSS, {}, lambda u: fetched.append(u) or jpg(), post, "k")
         from babebasket import usage
         self.assertEqual(usage._pending[-1]["stage"], "gallery")
         usage._pending.clear()
-        self.assertEqual(sent["images"], 5)                       # photos 2-6, not the packshot
+        (parts,) = sent
+        self.assertEqual(len(parts) - 1, 5)  # photos 2-6, not the packshot
+        self.assertIn("dosage panel", parts[0]["text"])
         self.assertTrue(all("f_jpg,q_auto,c_fit,h_400,w_400" in u for u in fetched))
-        self.assertEqual(out, [G.format("c").replace("f_auto", "f_jpg")])
-
-    def test_texture_selection_requires_a_texture_photo_and_caps_at_one(self):
-        photos = ["detail", "texture-a", "texture-b"]
-        labels = [{"i": 1, "type": "product_detail"}, {"i": 2, "type": "texture"}, {"i": 3, "type": "texture"}]
-        self.assertEqual(scene.pick_supporting(labels, photos, kinds=("texture",), limit=1), ["texture-a"])
-        self.assertEqual(scene.pick_supporting(labels[:1], photos, kinds=("texture",), limit=1), [])
+        self.assertEqual(out, [photo(scene.small_jpg(G.format("b"), 1200), "contents"),
+                               photo(scene.small_jpg(G.format("c"), 1200), "lip_swatch", False),
+                               photo(scene.small_jpg(G.format("d"), 1200), "label")])
 
     def test_without_gallery_skips_fetch_and_vision(self):
         fetch, post = mock.Mock(), mock.Mock()
-        self.assertEqual(scene.select_supporting({"store": "rossmann"}, {}, fetch, post,
-                                                kinds=("texture",), limit=1), [])
+        self.assertEqual(scene.classify_gallery({"store": "rossmann"}, {}, fetch, post), [])
         fetch.assert_not_called()
         post.assert_not_called()
 
@@ -81,7 +72,7 @@ class FlowTest(unittest.TestCase):
                    "draft": {"captions": [{"style": "a", "text": "Son xinh"}]}}
         self.draft_id = db.add_draft(self.conn, "dm", "L1", payload)
         db.set_status(self.conn, self.draft_id, "approved", discord_message_id="CAP", chosen_caption=1)
-        self.cfg = {"discord": {"channel_id": "CH", "owner_user_ids": []},
+        self.cfg = {**PHOTO_CFG, "discord": {"channel_id": "CH", "owner_user_ids": []},
                     "image": {"enabled": True, "max_per_day": 4, "max_per_post": 2}, "threads": {"enabled": True}}
 
     def payload(self):
@@ -89,56 +80,68 @@ class FlowTest(unittest.TestCase):
 
     def test_image_card_shows_the_photos_that_will_be_posted(self):
         with mock.patch.object(cli, "build_image", side_effect=build), \
-                mock.patch.object(cli, "supporting_photos", return_value=["s1", "s2"]) as pick, \
+                mock.patch.object(scene, "classify_gallery", return_value=[photo("s1", "lip_swatch", True),
+                                                                            photo("s2", "skin_swatch", True)]) as classify, \
+                mock.patch.object(cli, "fetch_bytes", return_value=jpg()), \
                 mock.patch.object(discord, "post_image_card", return_value="IMG1") as post, \
                 mock.patch.object(discord, "reply"), mock.patch.object(discord, "unreact"):
             cli.cmd_images(self.cfg, self.conn)
-        pick.assert_called_once()
+        classify.assert_called_once()
         card = post.call_args.args[1]
-        self.assertIn("Đăng kèm 2 ảnh", card["content"])
-        self.assertEqual([e["image"]["url"] for e in card["embeds"]], ["attachment://post.jpg", "s1", "s2"])
+        self.assertIn("Ảnh 1: AI · Ảnh 2–3: ảnh shop", card["content"])
+        self.assertEqual([e["image"]["url"] for e in card["embeds"]],
+                         ["attachment://post.jpg", "attachment://support-1.jpg", "attachment://support-2.jpg"])
         self.assertEqual({e["url"] for e in card["embeds"]}, {"https://dm/p/L1"})
         self.assertEqual(self.payload()["supporting"], ["s1", "s2"])
+        self.assertEqual(self.payload()["supporting_attached"], 2)
 
     def test_cream_category_gets_one_texture_photo(self):
         payload = self.payload()
         payload["product"].update(group="body", name="Bodylotion", categories="Körperpflege; Bodylotion & Hautcreme")
         db.set_payload(self.conn, self.draft_id, payload)
-        self.cfg["image"]["texture_categories"] = ["Bodylotion & Hautcreme"]
-
         with mock.patch.object(cli, "build_image", side_effect=build), \
-                mock.patch.object(scene, "select_supporting", return_value=["texture.jpg"]) as select, \
+                mock.patch.object(scene, "classify_gallery", return_value=[photo("detail", "product_detail"),
+                                                                            photo("texture.jpg", "texture", True),
+                                                                            photo("texture2.jpg", "texture", True)]) as classify, \
+                mock.patch.object(cli, "fetch_bytes", return_value=jpg()), \
                 mock.patch.object(discord, "post_image_card", return_value="IMG1") as post, \
                 mock.patch.object(discord, "unreact"):
             cli.cmd_images(self.cfg, self.conn)
-        select.assert_called_once_with(payload["product"], self.cfg, cli.fetch_bytes, kinds=("texture",), limit=1)
+        classify.assert_called_once()
+        self.assertEqual(self.payload()["photo_rule"], "cream")
         self.assertEqual(self.payload()["supporting"], ["texture.jpg"])
-        self.assertIn("1 ảnh phụ của shop", post.call_args.args[1]["content"])
+        self.assertIn("Ảnh 2: ảnh shop", post.call_args.args[1]["content"])
 
-    def test_shampoo_gets_no_supporting_photos(self):
+    def test_shampoo_gets_evidence_before_image_but_no_supporting_photos(self):
         payload = self.payload()
         payload["product"].update(group="hair", name="Shampoo", categories="Shampoo")
         db.set_payload(self.conn, self.draft_id, payload)
-        self.cfg["image"]["texture_categories"] = ["Bodylotion & Hautcreme", "Haarkur & Haarmaske"]
-        with mock.patch.object(cli, "build_image", side_effect=build), \
-                mock.patch.object(scene, "select_supporting") as pick, \
+        def first_image(payload, out, cfg, **kwargs):
+            self.assertEqual(payload["evidence"], {"texture": "texture.jpg", "swatch": None})
+            return build(payload, out, cfg, **kwargs)
+
+        with mock.patch.object(cli, "build_image", side_effect=first_image), \
+                mock.patch.object(scene, "classify_gallery", return_value=[photo("texture.jpg", "texture", True)]) as classify, \
                 mock.patch.object(discord, "post_image_card", return_value="IMG1"), \
                 mock.patch.object(discord, "reply"), mock.patch.object(discord, "unreact"):
             cli.cmd_images(self.cfg, self.conn)
-        pick.assert_not_called()
-
-    def test_reply_khong_anh_phu_drops_them(self):
-        payload = self.payload()
-        payload.update(supporting=["s1"], image_message_id="IMG1")
-        db.set_payload(self.conn, self.draft_id, payload)
-        db.set_status(self.conn, self.draft_id, "image_pending")
-        notes = {"text": "không ảnh phụ nha", "last_id": "R1", "unreadable": False}
-        with mock.patch.object(discord, "image_taps", return_value=set()), \
-                mock.patch.object(discord, "read_image_feedback", return_value=notes), \
-                mock.patch.object(cli, "send_image_card") as resend, mock.patch.object(discord, "reply"):
-            cli.cmd_check_images(self.cfg, self.conn)
-        resend.assert_not_called()                       # no paid AI edit for this
+        classify.assert_called_once()
         self.assertEqual(self.payload()["supporting"], [])
+
+    def test_gallery_is_classified_once_when_the_first_packshot_download_fails(self):
+        labels = [photo("lip", "lip_swatch", True)]
+        with mock.patch.object(cli, "build_image", return_value=None) as render, \
+                mock.patch.object(scene, "classify_gallery", return_value=labels) as classify, \
+                mock.patch.object(cli, "fetch_bytes", return_value=jpg()), \
+                mock.patch.object(discord, "post_image_card", return_value="IMG1"), mock.patch.object(discord, "unreact"):
+            cli.cmd_images(self.cfg, self.conn)
+            self.assertEqual(self.payload()["photo_rule"], "makeup")
+            render.side_effect = build
+            cli.cmd_images(self.cfg, self.conn)
+        classify.assert_called_once()
+        self.assertEqual(render.call_count, 2)
+        self.assertEqual(self.payload()["evidence"], {"texture": None, "swatch": "lip"})
+        self.assertEqual(self.payload()["image_message_id"], "IMG1")
 
     def test_publish_sends_the_carousel(self):
         payload = self.payload()

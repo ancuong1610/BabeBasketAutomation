@@ -85,9 +85,19 @@ class FeedbackTest(unittest.TestCase):
         self.assertIn('"hand on the left"', parts[0]["text"])
         self.assertEqual(len(parts), 2)
 
+    def test_openrouter_k4_includes_the_evidence_in_order_for_new_images_and_edits(self):
+        evidence = b"shop contents"
+        for kwargs, images in (({}, [PNG, evidence]),
+                               ({"feedback": "more light", "previous": b"old scene"}, [b"old scene", PNG, evidence])):
+            with self.subTest(kwargs=kwargs):
+                parts = self._body(style="k4", evidence=evidence, **kwargs)
+                actual = [base64.b64decode(part["image_url"]["url"].split(",", 1)[1]) for part in parts[1:]]
+                self.assertEqual(actual, images)
+
     def test_feedback_is_capped(self):
         parts = self._body(feedback="x" * 2000, previous=PNG)
-        self.assertLess(len(parts[0]["text"]), 1500)
+        feedback = parts[0]["text"].split('"', 2)[1]
+        self.assertEqual(len(feedback), scene.MAX_FEEDBACK_CHARS)
 
 
 class ScaleTest(unittest.TestCase):
