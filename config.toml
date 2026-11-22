@@ -99,7 +99,8 @@ enabled = false
 
 [instagram]
 # Set INSTAGRAM_ACCESS_TOKEN (Instagram Login) or META_PAGE_ACCESS_TOKEN, plus INSTAGRAM_USER_ID, in .env first.
-enabled = false
+# On since 2026-11-22 (account babe._basket): every approved post goes to Threads and Instagram.
+enabled = true
 
 [image]
 # Gemini image model on OpenRouter that uses the shop packshot to make the post image.
