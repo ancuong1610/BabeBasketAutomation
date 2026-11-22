@@ -604,6 +604,40 @@ def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
     return max(0, min(per_post, per_day))
 
 
+GIFT_SET = re.compile(r"geschenk|gift\s*set|\bset\b|adventskalender", re.I)
+
+
+def is_gift_set(product: dict) -> bool:
+    return bool(GIFT_SET.search(product.get("name") or "")) or "Geschenksets" in (product.get("categories") or "")
+
+
+def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list[bytes]:
+    """Supporting photos as JPEG bytes to upload with the image card (Instagram takes JPEG only; Rossmann serves PNG).
+    A photo that cannot be fetched or read is skipped: the post then simply has one photo less."""
+    import io
+
+    from PIL import Image
+
+    out = []
+    for url in urls[:9]:
+        try:
+            data = Path(url[7:]).read_bytes() if url.startswith("file://") else (fetch or fetch_bytes)(url)
+            img = Image.open(io.BytesIO(data))
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGBA")
+                bg = Image.new("RGB", img.size, "white")
+                bg.paste(img, mask=img.split()[-1])
+                img = bg
+            img = img.convert("RGB")
+            img.thumbnail((max_side, max_side))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=90)
+            out.append(buf.getvalue())
+        except Exception as err:
+            print(f"! supporting photo skipped ({url.split('?')[0][-60:]}): {err}", file=sys.stderr)
+    return out
+
+
 def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "", feedback: str = "",
                     text: str = "") -> None:
     """Make the post image (AI if allowed, else plain) and send it to Discord for approval.
@@ -648,7 +682,9 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         product = payload["product"]
         if use_ai and not feedback and not product.get("pair") and "supporting" not in payload:
             categories = (product.get("categories") or "").split("; ")
-            if product.get("group") == "makeup":
+            if is_gift_set(product):  # buyers want to see the real box and what is inside it
+                payload["supporting"] = [product.get("source_original") or product["image_url"]]
+            elif product.get("group") == "makeup":
                 payload["supporting"] = supporting_photos(product, cfg)
             elif any(category in cfg.get("image", {}).get("texture_categories", []) for category in categories):
                 payload["supporting"] = supporting_photos(product, cfg, kinds=("texture",), limit=1)
@@ -680,10 +716,12 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         db.set_payload(conn, draft_id, payload)
     edits_left = ai_tries_left(cfg, conn, draft_id)
     source = payload["image_source"]
+    extra = attachable_photos(payload.get("supporting") or [])
     card = discord.build_image_card(draft_id, payload["product"], source, edits_left, "\n".join(notes),
                                     reply_to=row["discord_message_id"], supporting=payload.get("supporting"),
-                                    has_text=can_reletter(payload))
-    payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left)
+                                    has_text=can_reletter(payload), attached=len(extra))
+    payload["image_message_id"] = discord.post_image_card(channel, card, path, edits_left, extra)
+    payload["supporting_attached"] = len(extra)
     payload.pop("unposted_image", None)
     try:  # the image card is there: the caption card no longer waits
         discord.unreact(channel, row["discord_message_id"], discord.WAIT)
@@ -870,12 +908,17 @@ def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
                 if not image_loaded:
                     image_loaded = True
                     try:
-                        image_url = discord.card_image_url(channel, payload.get("image_message_id") or card)
+                        if payload.get("supporting_attached"):  # every photo lives on the approved card
+                            urls = discord.card_image_urls(channel, payload["image_message_id"])
+                            image_url, extra_images = (urls[0] if urls else None), urls[1:]
+                        else:
+                            image_url = discord.card_image_url(channel, payload.get("image_message_id") or card)
+                            extra_images = payload.get("supporting") or []
                     except Exception as err:
                         image_error = err
                 if image_error:
                     raise image_error
-                post = publish(text, image_url, extra_images=payload.get("supporting") or None)
+                post = publish(text, image_url, extra_images=extra_images or None)
             except (Exception, SystemExit) as err:
                 attempts[platform] = attempts.get(platform, 0) + 1
                 if attempts[platform] >= MAX_PUBLISH_ATTEMPTS and platform not in gave_up:

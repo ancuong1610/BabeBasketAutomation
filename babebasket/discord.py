@@ -15,6 +15,7 @@ import urllib.parse
 
 from babebasket.config import secret
 import json
+import re
 from pathlib import Path
 
 from babebasket.http import request_json, request_multipart
@@ -157,12 +158,14 @@ def build_card(draft_id: int, product: dict, quote: dict, draft: dict, warnings:
     return card
 
 
-def _send(channel_id: str, card: dict, image_path: str | None = None) -> dict:
+def _send(channel_id: str, card: dict, image_path: str | None = None, extra: list[bytes] | None = None) -> dict:
     if image_path:
+        files = [("files[0]", "post.jpg", Path(image_path).read_bytes(), "image/jpeg")]
+        files += [(f"files[{i}]", f"support-{i}.jpg", data, "image/jpeg") for i, data in enumerate(extra or [], 1)]
         return request_multipart(
             f"{API}/channels/{channel_id}/messages",
             fields={"payload_json": json.dumps(card, ensure_ascii=False)},
-            files=[("files[0]", "post.jpg", Path(image_path).read_bytes(), "image/jpeg")],
+            files=files,
             headers={"Authorization": f"Bot {secret('DISCORD_BOT_TOKEN')}", "User-Agent": BOT_UA},
             timeout=120,
         )
@@ -182,7 +185,10 @@ def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | No
 
 
 def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
-                     reply_to: str | None = None, supporting: list[str] | None = None, has_text: bool = True) -> dict:
+                     reply_to: str | None = None, supporting: list[str] | None = None, has_text: bool = True,
+                     attached: int = 0) -> dict:
+    """`attached` = how many supporting photos are uploaded with the card (support-1.jpg …): those are shown and
+    later posted from the card itself, so what the owner approves is exactly what gets posted."""
     kind = "" if source == "gemini" else " (plain background)"
     if edits_left > 0:
         edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
@@ -205,9 +211,12 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
             "image": {"url": "attachment://post.jpg"},
             "footer": {"text": f"draft {draft_id} · image"},
             "color": STORE_COLORS.get(product.get("store"), 0xF6E7A1),
-        }.items() if v}] + ([{"url": product["product_url"], "image": {"url": u}} for u in supporting[:3]]
+        }.items() if v}] + ([{"url": product["product_url"], "image": {"url": f"attachment://support-{i}.jpg"}}
+                             for i in range(1, attached + 1)][:3] if attached and product.get("product_url") else
+                            [{"url": product["product_url"], "image": {"url": u}} for u in supporting[:3]]
                             if supporting and product.get("product_url") else []),
-        "attachments": [{"id": 0, "filename": "post.jpg"}],
+        "attachments": [{"id": 0, "filename": "post.jpg"}]
+                       + [{"id": i, "filename": f"support-{i}.jpg"} for i in range(1, attached + 1)],
         "allowed_mentions": {"parse": []},
     }
     if reply_to:
@@ -215,8 +224,8 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
     return card
 
 
-def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int) -> str:
-    message = _send(channel_id, card, image_path)
+def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int, extra: list[bytes] | None = None) -> str:
+    message = _send(channel_id, card, image_path, extra)
     _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []) + [TEXT])
     return message["id"]
 
@@ -333,6 +342,18 @@ def reply(channel_id: str, message_id: str, text: str) -> str:
         {"content": text, "message_reference": {"message_id": message_id}, "allowed_mentions": {"parse": []}},
     )
     return message["id"]
+
+
+def card_image_urls(channel_id: str, message_id: str) -> list[str]:
+    """Fresh CDN links of all photos uploaded with the card, post.jpg first, then support-1.jpg, support-2.jpg …"""
+    message = _call("GET", f"/channels/{channel_id}/messages/{message_id}") or {}
+    atts = [a for a in message.get("attachments") or [] if a.get("url")]
+
+    def order(att):
+        name = att.get("filename") or ""
+        m = re.search(r"support-(\d+)", name)
+        return (0, 0) if name.startswith("post") else (1, int(m.group(1)) if m else 99)
+    return [a["url"] for a in sorted(atts, key=order)]
 
 
 def card_image_url(channel_id: str, message_id: str) -> str | None:

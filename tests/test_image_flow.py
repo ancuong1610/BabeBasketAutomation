@@ -44,7 +44,7 @@ class FlowTest(unittest.TestCase):
                 payload["scene_path"] = self.scene_file
             return str(out)
 
-        def fake_post_image_card(channel, card, path, edits_left):
+        def fake_post_image_card(channel, card, path, edits_left, extra=None):
             self.cards.append({"card": card, "edits": edits_left})
             return f"IMG{len(self.cards)}"
 

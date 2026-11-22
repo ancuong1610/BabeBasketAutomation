@@ -112,7 +112,7 @@ class CardWarningTest(unittest.TestCase):
         cards = []
         with mock.patch.object(cli, "build_image", side_effect=fake_build), \
                 mock.patch.object(discord, "unreact"), \
-                mock.patch.object(discord, "post_image_card", side_effect=lambda ch, card, path, n: cards.append(card) or "M"):
+                mock.patch.object(discord, "post_image_card", side_effect=lambda ch, card, path, n, extra=None: cards.append(card) or "M"):
             cli.send_image_card(CFG, conn, row, payload, ai=True)
         self.assertIn("⚠️ Có thể khác bao bì thật: thân chai trong suốt thay vì đục", cards[0]["content"])
 
