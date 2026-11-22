@@ -264,3 +264,64 @@ class MultiPlatformPublishTest(unittest.TestCase):
             finally:
                 first.close()
                 second.close()
+
+
+class InstagramTokenRefreshTest(unittest.TestCase):
+    def setUp(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.enterContext(mock.patch.object(meta, "TOKEN_FILE", tmp / "instagram_token.json"))
+        self.enterContext(mock.patch.object(meta.config, "load_dotenv"))
+        env = {k: v for k, v in meta.os.environ.items()
+               if k not in ("INSTAGRAM_ACCESS_TOKEN", "META_APP_ID", "META_APP_SECRET")}
+        self.enterContext(mock.patch.dict(meta.os.environ, env, clear=True))
+        self.api = self.enterContext(mock.patch.object(meta, "request_json"))
+
+    def _age(self, days):
+        data = json.loads(meta.TOKEN_FILE.read_text())
+        data["refreshed_at"] = (meta.dt.datetime.now(meta.dt.timezone.utc) - meta.dt.timedelta(days=days)).isoformat()
+        meta.TOKEN_FILE.write_text(json.dumps(data))
+
+    def test_first_run_starts_the_clock_without_a_call(self):
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGold"
+        self.assertFalse(meta.maybe_refresh_instagram())
+        self.api.assert_not_called()
+        self.assertEqual(meta.instagram_token(), "IGold")
+
+    def test_ig_token_refreshes_after_a_week(self):
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGold"
+        meta.maybe_refresh_instagram()
+        self._age(8)
+        self.api.return_value = {"access_token": "IGnew", "expires_in": 5184000}
+        self.assertTrue(meta.maybe_refresh_instagram())
+        url = self.api.call_args.args[0]
+        self.assertTrue(url.startswith("https://graph.instagram.com/refresh_access_token?"))
+        self.assertIn("ig_refresh_token", url)
+        self.assertEqual(meta.instagram_token(), "IGnew")
+        self.assertEqual(meta.TOKEN_FILE.stat().st_mode & 0o777, 0o600)
+
+    def test_eaa_token_needs_app_secret_then_exchanges(self):
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "EAAold"
+        meta.maybe_refresh_instagram()
+        self._age(8)
+        with self.assertRaisesRegex(RuntimeError, "META_APP_SECRET"):
+            meta.maybe_refresh_instagram()
+        meta.os.environ.update({"META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
+        self.api.return_value = {"access_token": "EAAnew", "expires_in": 5184000}
+        self.assertTrue(meta.maybe_refresh_instagram())
+        self.assertIn("fb_exchange_token", self.api.call_args.args[0])
+        self.assertEqual(meta.instagram_token(), "EAAnew")
+
+    def test_exchange_error_hides_the_secret(self):
+        meta.os.environ.update({"INSTAGRAM_ACCESS_TOKEN": "EAAold", "META_APP_ID": "1", "META_APP_SECRET": "s3cret"})
+        meta.maybe_refresh_instagram()
+        self._age(8)
+        self.api.side_effect = RuntimeError("HTTP 400 for https://graph.facebook.com/...client_secret=s3cret")
+        with self.assertRaises(RuntimeError) as ctx:
+            meta.maybe_refresh_instagram()
+        self.assertNotIn("s3cret", str(ctx.exception))
+
+    def test_new_env_token_wins_over_the_saved_one(self):
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGold"
+        meta.maybe_refresh_instagram()
+        meta.os.environ["INSTAGRAM_ACCESS_TOKEN"] = "IGpasted"
+        self.assertEqual(meta.instagram_token(), "IGpasted")

@@ -800,6 +800,21 @@ def cmd_publish(cfg: dict, conn) -> None:
         _publish_ready(cfg, conn, enabled)
 
 
+def warn_once_a_day(cfg: dict, conn, key: str, text: str) -> None:
+    """A Discord warning at most once a day per key (problems that repeat every minute must not spam)."""
+    from babebasket import coupons, discord
+
+    today = dt.date.today().isoformat()
+    if coupons._kv(conn, f"warned_{key}") == today:
+        return
+    try:
+        discord._call("POST", f"/channels/{cfg['discord']['channel_id']}/messages",
+                      {"content": text[:1900], "allowed_mentions": {"parse": []}})
+        coupons._kv(conn, f"warned_{key}", today)
+    except Exception as err:
+        print(f"! warning not sent: {err}", file=sys.stderr)
+
+
 def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
     from babebasket import discord, meta, threads
 
@@ -817,6 +832,13 @@ def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
                 print("threads token refreshed")
         except (Exception, SystemExit) as err:  # also isolate missing Threads configuration
             print(f"! threads token refresh failed: {err}", file=sys.stderr)
+    if "instagram" in enabled:
+        try:
+            if meta.maybe_refresh_instagram(graph_version):
+                print("instagram token refreshed")
+        except (Exception, SystemExit) as err:  # the current token keeps working until it expires
+            print(f"! instagram token refresh failed: {err}", file=sys.stderr)
+            warn_once_a_day(cfg, conn, "instagram_refresh", f"⚠️ Không gia hạn được token Instagram: {str(err)[:300]}")
 
     for row in db.drafts(conn, "ready"):
         draft_id = row["id"]

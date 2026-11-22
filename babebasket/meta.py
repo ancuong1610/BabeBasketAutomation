@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
 import json
 import os
 import sys
@@ -11,6 +13,7 @@ import urllib.parse
 from functools import partial
 
 from babebasket import config
+from babebasket.config import DATA
 from babebasket.http import request_json, request_multipart
 
 DEFAULT_GRAPH_VERSION = "v21.0"
@@ -64,11 +67,85 @@ def _post_result(request, platform: str, post_id: str, field: str) -> dict:
     return {"id": post_id, "permalink": permalink}
 
 
-def _instagram_auth() -> tuple[str, ...]:
-    """Instagram Login (own token, no Facebook Page needed) when INSTAGRAM_ACCESS_TOKEN is set,
-    else Facebook Login through the linked Page's token."""
+# --- Instagram token: kept fresh like the Threads token -------------------------------------------
+# The token pasted into .env starts a 60-day clock. Once it is a week old it is swapped for a fresh one and
+# saved in data/instagram_token.json (0600). A new token pasted into .env always wins over the saved one.
+#   "IG…" (Instagram Login)        -> graph.instagram.com/refresh_access_token (no app secret needed)
+#   "EAA…" (Facebook-type, Unified login) -> oauth/access_token fb_exchange_token (needs META_APP_ID + META_APP_SECRET)
+TOKEN_FILE = DATA / "instagram_token.json"
+REFRESH_AFTER_DAYS = 7
+
+
+def _fingerprint(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+def _env_instagram_token() -> str:
     config.load_dotenv()
-    own = os.environ.get("INSTAGRAM_ACCESS_TOKEN")
+    return os.environ.get("INSTAGRAM_ACCESS_TOKEN") or ""
+
+
+def _saved_instagram() -> dict:
+    env = _env_instagram_token()
+    if not env or not TOKEN_FILE.exists():
+        return {}
+    try:
+        saved = json.loads(TOKEN_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+    return saved if saved.get("source") == _fingerprint(env) else {}
+
+
+def instagram_token() -> str:
+    return _saved_instagram().get("access_token") or _env_instagram_token()
+
+
+def _save_instagram(token: str, source: str, expires_in=None) -> None:
+    now = dt.datetime.now(dt.timezone.utc)
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_FILE.write_text(json.dumps({
+        "access_token": token, "source": source, "refreshed_at": now.isoformat(timespec="seconds"),
+        "expires_at": (now + dt.timedelta(seconds=int(expires_in))).isoformat(timespec="seconds")
+        if expires_in else None,
+    }))
+    os.chmod(TOKEN_FILE, 0o600)
+
+
+def maybe_refresh_instagram(graph_version: str = DEFAULT_GRAPH_VERSION) -> bool:
+    """Swap the Instagram token for a fresh 60-day one once it is a week old. True if refreshed."""
+    env = _env_instagram_token()
+    if not env:  # Page-token setup (META_PAGE_ACCESS_TOKEN): Page tokens from a long-lived user token do not expire
+        return False
+    saved = _saved_instagram()
+    if not saved:  # first run or a new token in .env: start the clock, no call
+        _save_instagram(env, _fingerprint(env))
+        return False
+    age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(saved["refreshed_at"])
+    if age < dt.timedelta(days=REFRESH_AFTER_DAYS):
+        return False
+    current = saved["access_token"]
+    if current.startswith("IG"):
+        reply = request_json("https://graph.instagram.com/refresh_access_token?" + urllib.parse.urlencode(
+            {"grant_type": "ig_refresh_token", "access_token": current}), retries=1)
+    else:
+        config.load_dotenv()
+        app_id, app_secret = os.environ.get("META_APP_ID"), os.environ.get("META_APP_SECRET")
+        if not (app_id and app_secret):
+            raise RuntimeError("Instagram token cannot be renewed: add META_APP_ID and META_APP_SECRET to .env "
+                               "(developers.facebook.com → app → App settings → Basic)")
+        try:
+            reply = request_json(f"https://graph.facebook.com/{graph_version}/oauth/access_token?" + urllib.parse.urlencode(
+                {"grant_type": "fb_exchange_token", "client_id": app_id, "client_secret": app_secret,
+                 "fb_exchange_token": current}), retries=1)
+        except Exception as err:  # never let the app secret or token reach a log
+            raise RuntimeError(f"Instagram token exchange failed ({type(err).__name__})") from None
+    _save_instagram(reply["access_token"], saved["source"], reply.get("expires_in"))
+    return True
+
+
+def _instagram_auth() -> tuple[str, ...]:
+    """The Instagram token (kept fresh, see above), else the linked Facebook Page's token."""
+    own = instagram_token()
     if own:
         return (own,)  # host is passed per call below
     return (config.secret("META_PAGE_ACCESS_TOKEN"),)
@@ -77,9 +154,7 @@ def _instagram_auth() -> tuple[str, ...]:
 def _instagram_host() -> str:
     """Instagram Login tokens ("IG…") use graph.instagram.com; Facebook-type tokens ("EAA…", from the
     dashboard's Unified login / Facebook Login for Business, or a Page token) use graph.facebook.com."""
-    config.load_dotenv()
-    own = os.environ.get("INSTAGRAM_ACCESS_TOKEN") or ""
-    return "graph.instagram.com" if own.startswith("IG") else "graph.facebook.com"
+    return "graph.instagram.com" if instagram_token().startswith("IG") else "graph.facebook.com"
 
 
 def instagram_publish(caption: str, image_url: str | None, extra_images: list[str] | None = None, wait_s: int = 60,
