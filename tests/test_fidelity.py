@@ -173,3 +173,16 @@ class CardWarningTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClosedPackagingIsNotAProblemTest(unittest.TestCase):
+    def test_the_check_is_told_that_closed_vs_open_is_fine(self):
+        from babebasket import scene
+        seen = {}
+
+        def post(url, **kw):
+            seen["prompt"] = kw["body"]["messages"][0]["content"][0]["text"]
+            return {"choices": [{"message": {"content": '{"match": true, "problems": []}'}}]}
+        scene.check_fidelity(b"\x89PNG\r\n\x1a\n", b"\x89PNG\r\n\x1a\n", {"llm": {}}, post=post, api_key="k", style="k0")
+        self.assertIn("Closed-vs-open", seen["prompt"])
+        self.assertIn("never flag them", seen["prompt"])

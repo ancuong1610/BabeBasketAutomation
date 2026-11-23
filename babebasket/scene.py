@@ -224,7 +224,10 @@ CHECK_PROMPT = """The FIRST image is the official photo of the real product(s). 
 that must show the same product(s). Compare the packaging: container shape, opaque vs transparent,
 body colour and finish, cap/pump colour and shape, label layout, brand and product name.
 Ignore background, hand, lighting, angle and size. Small blur is fine. Tiny small-print typos are
-not worth flagging; wrong brand/product names are.{facts}
+not worth flagging; wrong brand/product names are.
+The AI photo is REQUIRED to show the product CLOSED (cap on, lid shut, applicator inside). The official photo may
+show it opened (cap off, lipstick bullet or applicator out, pump open). Closed-vs-open, a cap placed on the product,
+or a hidden bullet/applicator are NOT problems: never flag them; compare the visible packaging only.{facts}
 {contents_check}
 Return only JSON: {"match": true or false, "problems": ["short problem in Vietnamese", ...]}
 Set "match" to false for any of the contents problems described above or a packaging difference a customer would notice."""
