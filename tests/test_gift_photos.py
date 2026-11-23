@@ -120,3 +120,14 @@ class GiftSetPhotoTest(unittest.TestCase):
             self.assertEqual(discord.card_image_urls("CH", "M"),
                              ["https://cdn.discordapp.com/attachments/1/2/post.jpg?ex=1",
                               "https://cdn.discordapp.com/attachments/1/3/support-1.jpg?ex=1"])
+
+
+class InstagramRatioTest(unittest.TestCase):
+    def test_tall_and_wide_photos_are_padded_into_instagrams_range(self):
+        def jpeg(w, h):
+            buf = io.BytesIO(); Image.new("RGB", (w, h), "red").save(buf, "JPEG"); return buf.getvalue()
+        for w, h in ((530, 1200), (3000, 1000), (1080, 1350)):
+            out = cli.attachable_photos(["https://x"], fetch=lambda u, w=w, h=h: jpeg(w, h))
+            img = Image.open(io.BytesIO(out[0]))
+            self.assertGreaterEqual(img.width / img.height, 0.795, (w, h))
+            self.assertLessEqual(img.width / img.height, 1.915, (w, h))

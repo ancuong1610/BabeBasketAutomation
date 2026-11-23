@@ -716,6 +716,23 @@ def ai_tries_left(cfg: dict, conn, draft_id: int) -> int:
     return max(0, min(per_post, per_day))
 
 
+def fit_post_ratio(img, low: float = 0.8, high: float = 1.91):
+    """Pad (white, never crop) a photo into Instagram's allowed width/height range 4:5 … 1.91:1.
+    2026-11-23: a 530×1200 Rossmann packshot (0.44) made Instagram reject the whole carousel."""
+    from PIL import Image
+
+    ratio = img.width / img.height
+    if low <= ratio <= high:
+        return img
+    if ratio < low:
+        size = (round(img.height * low), img.height)
+    else:
+        size = (img.width, round(img.width / high))
+    canvas = Image.new("RGB", size, "white")
+    canvas.paste(img, ((size[0] - img.width) // 2, (size[1] - img.height) // 2))
+    return canvas
+
+
 def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list[bytes]:
     """Supporting photos as JPEG bytes to upload with the image card (Instagram takes JPEG only; Rossmann serves PNG).
     A photo that cannot be fetched or read is skipped: the post then simply has one photo less."""
@@ -735,7 +752,7 @@ def attachable_photos(urls: list[str], fetch=None, max_side: int = 1440) -> list
                 bg = Image.new("RGB", img.size, "white")
                 bg.paste(img, mask=img.split()[-1])
                 img = bg
-            img = img.convert("RGB")
+            img = fit_post_ratio(img.convert("RGB"))
             img.thumbnail((max_side, max_side))
             buf = io.BytesIO()
             img.save(buf, "JPEG", quality=90)
