@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import fcntl
 import json
+import os
 import re
 import sys
 import time
@@ -364,6 +365,17 @@ def berlin_midnight_utc() -> str:
     return local.astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
 
+def daily_running(locks=None) -> bool:
+    """True while a `daily` run (scrape, draft, post) holds its run.sh lock with a live process."""
+    pid_file = (locks or DATA / "locks") / "daily.lock" / "pid"
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def cmd_refill(cfg: dict, conn) -> list[int]:
     """Keep today's list at [shortlist] per_day: every ❌ (caption or image) gets a replacement draft.
 
@@ -372,14 +384,18 @@ def cmd_refill(cfg: dict, conn) -> list[int]:
     Returns the new draft ids; their cards go out with the next `post`.
     """
     sc = cfg["shortlist"]
+    if daily_running():  # 2026-11-23: refilling while `daily` was still drafting doubled the day's drafts
+        return []
     rows = conn.execute("SELECT id, status, payload FROM drafts WHERE created_at >= ?",
                         (berlin_midnight_utc(),)).fetchall()
     if not rows:
         return []
     payloads = [json.loads(r["payload"]) for r in rows]
     live = [p for r, p in zip(rows, payloads) if r["status"] != "rejected"]
+    rejected = sum(1 for r in rows if r["status"] == "rejected")
     refills_done = sum(1 for p in payloads if p.get("refill"))
-    missing = min(sc["per_day"] - len(live), sc.get("refill_max_per_day", 10) - refills_done)
+    # Only a ❌ earns a replacement: a day that is simply not fully drafted yet is not refilled.
+    missing = min(rejected - refills_done, sc["per_day"] - len(live), sc.get("refill_max_per_day", 10) - refills_done)
     if missing <= 0:
         return []
     groups = cfg.get("groups") or shortlist.DEFAULT_GROUPS
@@ -419,6 +435,12 @@ def cmd_post(cfg: dict, conn) -> None:
         raise SystemExit("Set discord.channel_id in config.toml or DISCORD_CHANNEL_ID in .env")
     failed = []
     for row in db.drafts(conn, "drafted"):
+        # Claim the draft first: `daily` and `check` (refill) can post at the same time, and only the run whose
+        # UPDATE changes the row sends its card (2026-11-23: unclaimed drafts got two cards each).
+        claimed = conn.execute("UPDATE drafts SET status = 'posting' WHERE id = ? AND status = 'drafted'", (row["id"],))
+        conn.commit()
+        if claimed.rowcount != 1:
+            continue
         payload = json.loads(row["payload"])
         n = len(payload["draft"].get("captions", []))
         image = payload.get("image_path")
@@ -438,6 +460,7 @@ def cmd_post(cfg: dict, conn) -> None:
                 message_id = discord.post_card(channel, card(False), n)
         except Exception as err:  # one bad card must not stop the rest of the day's drafts
             print(f"! card for draft #{row['id']} failed: {err}", file=sys.stderr)
+            db.set_status(conn, row["id"], "drafted")  # release the claim so the next `post` retries it
             failed.append(row["id"])
             continue
         db.set_status(conn, row["id"], "pending", discord_message_id=message_id)

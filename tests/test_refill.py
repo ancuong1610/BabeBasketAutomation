@@ -83,3 +83,67 @@ class PickTodayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoubleRunRegressionTest(RefillTest):
+    """2026-11-23: `check` refilled while `daily` was still drafting, and both posted the same drafts."""
+
+    def test_a_day_that_is_only_partly_drafted_is_not_refilled(self):
+        add(self.conn, "h1", "hair", "pending")          # daily has drafted 1 of 3 so far, nothing rejected
+        self.assertEqual(cli.cmd_refill(CFG, self.conn), [])
+        self.assertEqual(self.asked, [])
+
+    def test_no_refill_while_daily_is_running(self):
+        add(self.conn, "h1", "hair", "rejected")
+        with mock.patch.object(cli, "daily_running", return_value=True):
+            self.assertEqual(cli.cmd_refill(CFG, self.conn), [])
+        self.assertEqual(len(cli.cmd_refill(CFG, self.conn)), 1)   # once daily is done, the ❌ is replaced
+
+    def test_daily_running_reads_the_run_lock(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        locks = Path(tempfile.mkdtemp())
+        self.assertFalse(cli.daily_running(locks))
+        (locks / "daily.lock").mkdir()
+        (locks / "daily.lock" / "pid").write_text(str(os.getpid()))
+        self.assertTrue(cli.daily_running(locks))
+        (locks / "daily.lock" / "pid").write_text("999999")       # a crashed run's lock does not count
+        self.assertFalse(cli.daily_running(locks))
+
+
+class PostClaimTest(unittest.TestCase):
+    CFG = {"discord": {"channel_id": "CH"}}
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        payload = {"product": {"store": "dm", "product_id": "p", "brand": "B", "name": "N"}, "quote": {},
+                   "draft": {"captions": [{"text": "a"}]}, "warnings": []}
+        self.draft = db.add_draft(self.conn, "dm", "p", payload)
+
+    def test_a_draft_another_run_already_claimed_is_not_sent_again(self):
+        from babebasket import discord
+        sent = []
+
+        def post_card(channel, card, n, image_path=None):
+            # while this run is sending, the other run tries the same draft
+            sent.append(1)
+            with mock.patch.object(discord, "post_card", side_effect=lambda *a, **k: sent.append(2) or "M2"):
+                cli.cmd_post(self.CFG, self.conn)
+            return "M1"
+
+        with mock.patch.object(discord, "build_card", return_value={}), \
+                mock.patch.object(discord, "post_card", side_effect=post_card), mock.patch.object(cli.time, "sleep"):
+            cli.cmd_post(self.CFG, self.conn)
+        self.assertEqual(sent, [1])
+        row = self.conn.execute("SELECT status, discord_message_id FROM drafts WHERE id = ?", (self.draft,)).fetchone()
+        self.assertEqual((row["status"], row["discord_message_id"]), ("pending", "M1"))
+
+    def test_a_failed_send_is_released_for_the_next_post(self):
+        from babebasket import discord
+        with mock.patch.object(discord, "build_card", return_value={}), \
+                mock.patch.object(discord, "post_card", side_effect=RuntimeError("HTTP 500")):
+            with self.assertRaises(RuntimeError):
+                cli.cmd_post(self.CFG, self.conn)
+        status = self.conn.execute("SELECT status FROM drafts WHERE id = ?", (self.draft,)).fetchone()["status"]
+        self.assertEqual(status, "drafted")
