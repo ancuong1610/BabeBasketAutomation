@@ -2,6 +2,7 @@
 
 import json
 import unittest
+import urllib.parse
 from collections import defaultdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -96,6 +97,15 @@ class ThreadReviewTest(unittest.TestCase):
             self.assertIn(phrase, image_card["content"])
         self.assertNotIn("đã sửa", image_card["content"])
         self.assertIn(("201", payload["picker"]["message_id"]), self.cards)
+        # Owner 2026-11-24: no ✏️ in threads, typing is the edit.
+        reacted = self.reactions("201", payload["image_message_id"])
+        self.assertEqual(reacted, {discord.APPROVE, discord.REJECT, discord.TEXT})
+        self.assertNotIn("✏️", image_card["content"])
+
+    def reactions(self, channel, message_id):
+        prefix = f"/channels/{channel}/messages/{message_id}/reactions/"
+        return {urllib.parse.unquote(c.args[1][len(prefix):].split("/")[0])
+                for c in self.api.call_args_list if c.args[0] == "PUT" and c.args[1].startswith(prefix)}
 
     def test_thread_creation_failure_keeps_card_in_main_channel(self):
         self.fail_create = True
@@ -108,6 +118,7 @@ class ThreadReviewTest(unittest.TestCase):
         card = self.cards[MAIN, payload["image_message_id"]]
         self.assertEqual(card["message_reference"]["message_id"], "201")
         self.assertIn("reply", card["content"])
+        self.assertIn(discord.EDIT, self.reactions(MAIN, payload["image_message_id"]))  # legacy flow unchanged
 
     def test_plain_owner_edits_are_isolated_by_thread(self):
         ids = [self.approved(channel) for channel in ("201", "202")]

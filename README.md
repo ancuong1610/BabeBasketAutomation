@@ -40,7 +40,7 @@ The card shows the image version and the latest edit. When a new version arrives
 - ✅ Queue the current version for posting.
 - ❌ Drop the draft. This takes priority over other actions.
 - ✍️ Type what to change in the thread, e.g. “sản phẩm to hơn, nền sáng hơn”. A written edit
-  takes priority over ✅. Tapping ✏️ by itself gets a reminder.
+  takes priority over ✅. Thread cards have no ✏️ (typing is the edit); old main-channel cards keep ✏️ as a reminder.
 - 🔤 On K0, tap 🔤 and type the new words to reuse the same scene without an AI call.
   The first line is the title. Up to three more lines replace the points.
 - 📷 Send an image to the thread to add it to the set. Use the photo picker to choose which

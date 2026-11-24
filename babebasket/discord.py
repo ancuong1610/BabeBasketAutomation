@@ -287,9 +287,12 @@ def build_image_card(draft_id: int, product: dict, source: str, edits_left: int,
     return card
 
 
-def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int, extra: list[bytes] | None = None) -> str:
+def post_image_card(channel_id: str, card: dict, image_path: str, edits_left: int, extra: list[bytes] | None = None,
+                    *, in_thread: bool = False) -> str:
     message = _send(channel_id, card, image_path, extra)
-    _react(channel_id, message["id"], [APPROVE, REJECT] + ([EDIT] if edits_left > 0 else []) + [TEXT])
+    # Owner 2026-11-24: no ✏️ in a draft thread; typing in the thread is the edit.
+    pencil = [EDIT] if edits_left > 0 and not in_thread else []
+    _react(channel_id, message["id"], [APPROVE, REJECT] + pencil + [TEXT])
     return message["id"]
 
 

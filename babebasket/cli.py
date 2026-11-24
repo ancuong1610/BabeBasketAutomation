@@ -845,7 +845,8 @@ def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: lis
                                     has_text=can_reletter(payload), attached=len(extra), picker=bool(candidates),
                                     **image_card_version(cfg, payload))
     channel = discord.draft_channel(cfg, payload)
-    message_id = discord.post_image_card(channel, card, path, edits_left, extra)
+    thread = {"in_thread": True} if payload.get("thread_id") else {}  # legacy call stays as it was
+    message_id = discord.post_image_card(channel, card, path, edits_left, extra, **thread)
     payload.update(image_message_id=message_id, supporting=supporting, supporting_attached=len(extra))
     if candidates:
         selected = candidate_indexes(candidates, supporting)
