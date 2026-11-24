@@ -34,22 +34,30 @@ Two steps per post, so no paid AI image is made for a post you reject.
   conditioner photo. You can also reply directly to the caption card with a photo, link, or `ảnh 2`.
   If you already tapped ✅, the bot waits up to 10 minutes for the replacement.
 
-**2. Image card**, sent as a reply under the caption card on the next `check` (≤1 min):
+**2. Image card**, sent in its own thread under the caption card on the next `check` (≤1 min).
+The card shows the image version and the latest edit. When a new version arrives, the old card points to it.
 
-- ✅ **accept** → queued for posting
-- ❌ **reject** → the post is dropped (wins over everything)
-- ✏️ **edit** → **reply to the image card** with what to change, in Vietnamese or English
-  ("sản phẩm to hơn, nền sáng hơn", "hand from the left", "less blur"). The AI edits *that*
-  image as asked and keeps the packaging identical to the store photo, then sends a new card.
-  Tapping ✏️ without replying just gets a reminder to reply. A reply wins over ✅.
-- 🔤 **new words on K0** (free, no AI): tap 🔤 and reply with the text. First line = title,
-  next lines = the points (up to 3); one line changes only the title. The same scene is
-  lettered again and sent as a new card.
+- ✅ Queue the current version for posting.
+- ❌ Drop the draft. This takes priority over other actions.
+- ✍️ Type what to change in the thread, e.g. “sản phẩm to hơn, nền sáng hơn”. A written edit
+  takes priority over ✅. Tapping ✏️ by itself gets a reminder.
+- 🔤 On K0, tap 🔤 and type the new words to reuse the same scene without an AI call.
+  The first line is the title. Up to three more lines replace the points.
+- 📷 Send an image to the thread to add it to the set. Use the photo picker to choose which
+  supporting photos to publish.
 
-Replies need the bot's **Message Content Intent** switched on (Discord Developer Portal →
-your app → Bot → Privileged Gateway Intents). Without it the bot says so under the card.
+Existing image cards without a thread and cards that fall back to the main channel use the reply flow.
+The bot needs **Create Public Threads**, **Send Messages in Threads**, and **Message Content Intent**
+(Discord Developer Portal → your app → Bot → Privileged Gateway Intents).
 
-Status in the database: `pending` → `approved` (caption) → `image_pending` → `ready` (image) → `published`.
+Publishing progress goes to the draft thread. If `[discord].posted_channel_id` is set, the bot sends one
+summary to **#posted** with the caption choice, image version, and links or errors for each enabled
+platform. A reply on the caption card points to **#posted**. The bot tries to archive the thread
+after publishing or rejection.
+
+Drafts move from `pending` to `approved` (caption), `image_pending`, then `ready` (image).
+For thread drafts, the final status is `published` when every enabled platform succeeds or
+`publish_failed` if any platform fails permanently.
 
 ### Kiểu ảnh
 

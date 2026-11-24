@@ -1,11 +1,11 @@
 """Discord approval cards over the REST API (no always-on bot process needed).
 
 Two steps per post:
-1. Caption card (store packshot, captions): pick a caption and image style, then ✅ to approve or ❌ to reject.
-2. Image card (the AI post image, made only after step 1): ✅ accept, ❌ reject,
-   ✏️ edit = reply to the card with what to change ("product bigger, brighter shelf"),
-   and the AI edits that image as asked.
-`check` reads the reactions back.
+1. Pick a caption and image style in the main channel, then ✅ approve or ❌ reject.
+2. Review the versioned image in the thread under the caption card. Type what to change,
+   send a photo, tap 🔤 and type new words, or tap ✅ to publish / ❌ to drop. Cards without
+   a thread use the main-channel reply flow.
+`check` polls approvals and posts a final per-platform summary to #posted when configured.
 """
 
 from __future__ import annotations
@@ -51,6 +51,31 @@ def _call(method: str, path: str, body: dict | None = None):
 
 def _emoji(e: str) -> str:
     return urllib.parse.quote(e)
+
+
+def draft_channel(cfg: dict, payload: dict) -> str:
+    return payload.get("thread_id") or cfg["discord"]["channel_id"]
+
+
+def start_thread(channel_id: str, message_id: str, name: str) -> str:
+    if not str(channel_id).isdecimal() or not str(message_id).isdecimal():
+        raise ValueError("a Discord channel and caption message ID are required")
+    thread = _call("POST", f"/channels/{channel_id}/messages/{message_id}/threads",
+                   {"name": name[:100], "auto_archive_duration": 10080})
+    return thread["id"]
+
+
+def archive_thread(thread_id: str) -> None:
+    _call("PATCH", f"/channels/{thread_id}", {"archived": True})
+
+
+def mark_old_image_card(channel_id: str, message_id: str, version: int) -> None:
+    if not str(channel_id).isdecimal() or not str(message_id).isdecimal():
+        raise ValueError("a Discord channel and image message ID are required")
+    path = f"/channels/{channel_id}/messages/{message_id}"
+    old_card = _call("GET", path)
+    content = f"(cũ — xem v{version})\n{old_card.get('content', '')}"
+    _call("PATCH", path, {"content": content[:2000], "allowed_mentions": {"parse": []}})
 
 
 def rating_text(product: dict) -> str:
@@ -198,17 +223,30 @@ def post_card(channel_id: str, card: dict, n_captions: int, image_path: str | No
 
 def build_image_card(draft_id: int, product: dict, source: str, edits_left: int, note: str = "",
                      reply_to: str | None = None, supporting: list[str] | None = None, has_text: bool = True,
-                     attached: int = 0, picker: bool = False) -> dict:
+                     attached: int = 0, picker: bool = False, *, in_thread: bool = False,
+                     version: int = 1, max_versions: int | None = None, last_feedback: str = "") -> dict:
     """`attached` = how many supporting photos are uploaded with the card (support-1.jpg …): those are shown and
     later posted from the card itself, so what the owner approves is exactly what gets posted."""
-    kind = "" if source == "gemini" else " (plain background)"
-    if edits_left > 0:
-        edit = f"✏️ edit: **reply** with what to change ({edits_left} left)"
+    if in_thread:
+        edit = (f"✍️ gõ vào thread này để sửa ảnh AI (còn {edits_left} lần)" if edits_left else
+                "✍️ hết lượt sửa ảnh AI")
+        actions = f"✅ đăng · ❌ bỏ · {edit}"
+        if has_text:
+            actions += " · 🔤 + gõ chữ = chỉ đổi chữ (miễn phí)"
+        actions += " · 📷 gửi ảnh vào thread = thêm ảnh"
     else:
-        edit = "✏️ no edits left"
-    content = f"📷 **Draft #{draft_id}** post image{kind}: ✅ accept · ❌ reject · {edit}"
-    if has_text:
-        content += " · 🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý"
+        kind = "" if source == "gemini" else " (plain background)"
+        edit = (f"✏️ edit: **reply** with what to change ({edits_left} left)" if edits_left else "✏️ no edits left")
+        actions = f"post image{kind}: ✅ accept · ❌ reject · {edit}"
+        if has_text:
+            actions += " · 🔤 chỉ đổi chữ (miễn phí): bấm 🔤 rồi **reply** chữ mới, dòng 1 = tiêu đề, các dòng sau = ý"
+        actions += ' · 📷 **reply** "thêm ảnh" kèm ảnh = thêm ảnh'
+    heading = f"📷 **Draft #{draft_id}**"
+    if max_versions is not None:
+        heading += f" · ảnh v{version}"  # 🔤 text-only versions count too, so no "/max": tries left is on the edit line
+        if version > 1 and last_feedback:
+            heading += f" (đã sửa: {' '.join(last_feedback.split())[:60]})"
+    content = f"{heading}\n{actions}"
     if note:
         content += f"\n{note}"
     supporting = (supporting or [])[:9]
@@ -347,11 +385,12 @@ def replies_after(channel_id: str, after: str) -> list[dict]:
 
 
 def read_image_feedback(channel_id: str, message_id: str, owners: list[str], after: str | None = None,
-                        accept_plain: bool = False, also: tuple = (), ignore: set[str] | None = None) -> dict:
+                        accept_plain: bool = False, also: tuple = (), ignore: set[str] | None = None,
+                        *, in_thread: bool = False) -> dict:
     """Owner's text replies to the image card, newer than message id `after`.
 
-    With `accept_plain` (only one image card is waiting), a plain message typed into the
-    channel after the card also counts, so the owner does not have to use Discord's reply.
+    With `accept_plain`, a plain message after the card counts. In a draft thread, replies
+    to other messages in that thread and image attachments without text also count.
 
     `also`: other message ids a reply may point to (the post's caption card: replying to the
     wrong card of the same post is an easy slip).
@@ -367,7 +406,7 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
     texts, replies, last_id, unreadable = [], [], None, False
     for m in sorted(messages, key=lambda m: int(m["id"])):
         ref = (m.get("message_reference") or {}).get("message_id")
-        if ref != message_id and ref not in also and not (accept_plain and ref is None):
+        if not in_thread and ref != message_id and ref not in also and not (accept_plain and ref is None):
             continue
         author = m.get("author") or {}
         if author.get("bot") or (owner_set and str(author.get("id")) not in owner_set):
@@ -378,6 +417,7 @@ def read_image_feedback(channel_id: str, message_id: str, owners: list[str], aft
         content = (m.get("content") or "").strip()
         if content:
             texts.append(content)
+        if content or (in_thread and m.get("attachments")):
             replies.append(m)
         else:
             unreadable = True
@@ -392,13 +432,34 @@ def unreact(channel_id: str, message_id: str, emoji: str) -> None:
     _call("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{_emoji(emoji)}/@me")
 
 
-def reply(channel_id: str, message_id: str, text: str) -> str:
-    message = _call(
-        "POST",
-        f"/channels/{channel_id}/messages",
-        {"content": text, "message_reference": {"message_id": message_id}, "allowed_mentions": {"parse": []}},
-    )
-    return message["id"]
+def reply(channel_id: str, message_id: str, text: str, *, nonce: str | None = None) -> str:
+    card = {"content": text, "message_reference": {"message_id": message_id}, "allowed_mentions": {"parse": []}}
+    if nonce:
+        card.update(nonce=nonce, enforce_nonce=True)
+    return _send(channel_id, card)["id"]
+
+
+def post_publish_summary(channel_id: str, draft_id: int, caption: int, payload: dict, enabled: list[str],
+                         *, nonce: str) -> str:
+    product = payload["product"]
+    title = " · ".join(value for value in (product.get("brand"), product.get("name")) if value)
+    version = payload.get("image_versions", 1 if payload.get("image_message_id") else 0)
+    lines = [f"Caption: {caption}", f"Ảnh: v{version}"]
+    for platform in enabled:
+        label = platform.capitalize()
+        if platform in payload["posted"]:
+            link = payload["posted"][platform].get("permalink") or "chưa lấy được link"
+            lines.append(f"✅ {label} {link}")
+        else:
+            reason = payload.get("publish_errors", {}).get(platform) or "Đã hết lượt thử đăng"
+            lines.append(f"❌ {label}: {reason[:150]}")
+    if thread_id := payload.get("thread_id"):
+        lines.append(f"Thread: <#{thread_id}>")
+    embed = {"title": (title or f"Draft #{draft_id}")[:256], "description": "\n".join(lines)}
+    if image_url := payload.get("published_image_url"):
+        embed["thumbnail"] = {"url": image_url}
+    card = {"embeds": [embed], "allowed_mentions": {"parse": []}, "nonce": nonce, "enforce_nonce": True}
+    return _send(channel_id, card)["id"]
 
 
 def card_image_urls(channel_id: str, message_id: str) -> list[str]:

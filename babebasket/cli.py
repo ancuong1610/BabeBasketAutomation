@@ -546,11 +546,12 @@ def replace_source(conn, draft_id: int, url: str, text: str = "", fetch=None) ->
 
 def cmd_source_replies(cfg: dict, conn) -> set[str]:
     """Route owner photos to caption or picker prompts before reading approvals."""
-    from babebasket import coupons, discord
+    from babebasket import discord
 
     channel = cfg["discord"]["channel_id"]
     owners = {str(o) for o in cfg["discord"].get("owner_user_ids", [])}
     cards, prompts, waiting = {}, {}, {}
+    channels = {channel: (cards, prompts, waiting)}
     for row in db.drafts(conn, "pending"):
         if not row["discord_message_id"]:
             continue
@@ -566,12 +567,27 @@ def cmd_source_replies(cfg: dict, conn) -> set[str]:
         picker = payload.get("picker") or {}
         if picker.get("photo_received") or not (prompt := picker.get("photo_prompt")):
             continue
+        cards, prompts, waiting = channels.setdefault(discord.draft_channel(cfg, payload), ({}, {}, {}))
         prompts[prompt] = prompt
         waiting[prompt] = prompt
         cards[prompt] = (row["id"], payload)
+    handled = set()
+    for draft_channel, (cards, prompts, waiting) in channels.items():
+        key = "source_replies_seen" if draft_channel == channel else f"source_replies_seen_{draft_channel}"
+        try:
+            handled.update(read_source_replies(conn, draft_channel, owners, cards, prompts, waiting, key))
+        except Exception as err:
+            print(f"! source photos in Discord channel {draft_channel}: {err}", file=sys.stderr)
+    return handled
+
+
+def read_source_replies(conn, channel: str, owners: set[str], cards: dict, prompts: dict,
+                        waiting: dict, key: str) -> set[str]:
+    from babebasket import coupons, discord
+
     if not cards:
         return set()
-    seen = coupons._kv(conn, "source_replies_seen") or "0"
+    seen = coupons._kv(conn, key) or "0"
     numeric = [int(m) for m in cards if str(m).isdigit()]
     after = str(max(int(seen), min(numeric) - 1 if numeric else 0))
     handled = set()
@@ -628,7 +644,7 @@ def cmd_source_replies(cfg: dict, conn) -> set[str]:
             discord.reply(channel, card, f"📷 Đã thay ảnh gốc{' ' + which if which else ''} cho draft #{draft_id}. "
                                          "Bấm ✅ khi sẵn sàng: ảnh AI sẽ dùng ảnh mới.")
             print(f"draft #{draft_id}: source photo replaced")
-    coupons._kv(conn, "source_replies_seen", after)
+    coupons._kv(conn, key, after)
     return handled
 
 
@@ -801,6 +817,11 @@ def candidate_indexes(candidates: list[dict], urls: list[str]) -> list[int]:
     return list(dict.fromkeys(indexes[key] for url in urls if (key := scene.small_jpg(url, 1200)) in indexes))
 
 
+def image_card_version(cfg: dict, payload: dict) -> dict:
+    return {"version": payload.get("image_versions", 1), "max_versions": cfg.get("image", {}).get("max_per_post", 2),
+            "in_thread": bool(payload.get("thread_id")), "last_feedback": payload.get("last_image_feedback", "")}
+
+
 def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: list[str],
                       *, require_all_photos: bool = False, candidates: list[dict] | None = None) -> str | None:
     """Upload the hero and supporting JPEGs, then save the exact set and order shown on the card."""
@@ -817,10 +838,13 @@ def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: lis
         elif require_all_photos:
             return None
     edits_left = ai_tries_left(cfg, conn, row["id"])
+    old_card = payload.get("image_message_id")
+    reply_to = None if payload.get("thread_id") else row["discord_message_id"]
     card = discord.build_image_card(row["id"], payload["product"], payload["image_source"], edits_left,
-                                    "\n".join(notes), reply_to=row["discord_message_id"], supporting=supporting,
-                                    has_text=can_reletter(payload), attached=len(extra), picker=bool(candidates))
-    channel = cfg["discord"]["channel_id"]
+                                    "\n".join(notes), reply_to=reply_to, supporting=supporting,
+                                    has_text=can_reletter(payload), attached=len(extra), picker=bool(candidates),
+                                    **image_card_version(cfg, payload))
+    channel = discord.draft_channel(cfg, payload)
     message_id = discord.post_image_card(channel, card, path, edits_left, extra)
     payload.update(image_message_id=message_id, supporting=supporting, supporting_attached=len(extra))
     if candidates:
@@ -829,6 +853,11 @@ def upload_image_card(cfg: dict, conn, row, payload: dict, path: str, notes: lis
         payload["image_card_note"] = "\n".join(notes)
     payload.pop("unposted_image", None)
     db.set_status(conn, row["id"], "image_pending", payload=json.dumps(payload, ensure_ascii=False))
+    if old_card and old_card != message_id:
+        try:
+            discord.mark_old_image_card(channel, old_card, payload.get("image_versions", 1))
+        except Exception as err:
+            print(f"! old image card for draft #{row['id']}: {err}", file=sys.stderr)
     return message_id
 
 
@@ -842,7 +871,8 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
     from babebasket import discord
 
     draft_id = row["id"]
-    channel = cfg["discord"]["channel_id"]
+    channel = discord.draft_channel(cfg, payload)
+    main = cfg["discord"]["channel_id"]
     if text and not can_reletter(payload):
         discord.reply(channel, payload["image_message_id"], discord.TEXT_STYLE_NOTICE)
         return
@@ -852,7 +882,7 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         notes.append("AI image limit reached (see [image] in config.toml), so this is the plain background.")
     if not payload["product"].get("image_url"):  # no product photo at all: text-only post
         db.set_status(conn, draft_id, "ready")
-        discord.reply(channel, row["discord_message_id"],
+        discord.reply(main, row["discord_message_id"],
                       f"ℹ️ Draft #{draft_id} has no product photo, so it will be posted as text only.")
         return
     if "photo_rule" not in payload and not text:
@@ -887,7 +917,7 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         path = build_image(payload, DATA / "images" / f"draft-{draft_id}-v{version}.jpg", cfg, ai=use_ai,
                            feedback=feedback if use_ai else "", previous=previous)
         usage.flush(conn, draft_id)
-        if feedback and use_ai:
+        if feedback and use_ai and not payload.get("thread_id"):
             notes.insert(0, f"✏️ {'Edited' if previous else 'New image'} with your note: “{feedback[:300]}”")
     if path is None:  # photo download failed: nothing was paid for; stay put and retry on the next check
         raise RuntimeError("product photo download failed; will retry")
@@ -899,10 +929,21 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
             if not ok:
                 notes.append("The AI image failed, so this is the plain background.")
         notes.extend(image_review_notes(payload))
+        if feedback or text:
+            payload["last_image_feedback"] = feedback or text
         # Saved before the Discord card goes out: if posting fails, the next run resends this image.
         payload["unposted_image"] = {"path": path, "version": version, "feedback": feedback, "text": text,
                                      "notes": notes}
         db.set_payload(conn, draft_id, payload)
+    if not payload.get("thread_id") and not payload.get("image_message_id"):
+        product = payload["product"]
+        name = f"#{draft_id} · {product.get('brand', '')} {product.get('name', '')}"
+        try:
+            payload["thread_id"] = discord.start_thread(main, row["discord_message_id"], name)
+        except Exception as err:
+            print(f"! thread for draft #{draft_id}: {err}", file=sys.stderr)
+        else:
+            db.set_payload(conn, draft_id, payload)
     upload_image_card(cfg, conn, row, payload, path, notes, candidates=photo_candidates(payload))
     if payload.get("picker"):
         try:
@@ -910,7 +951,7 @@ def send_image_card(cfg: dict, conn, row, payload: dict, ai: bool, note: str = "
         except Exception as err:  # keep the posted image card and retry the picker next check
             print(f"! photo picker for draft #{draft_id}: {err}", file=sys.stderr)
     try:  # the image card is there: the caption card no longer waits
-        discord.unreact(channel, row["discord_message_id"], discord.WAIT)
+        discord.unreact(main, row["discord_message_id"], discord.WAIT)
     except Exception:
         pass
     print(f"draft #{draft_id}: image card v{version} ({payload['image_source']})")
@@ -925,14 +966,17 @@ def cmd_images(cfg: dict, conn) -> None:
             print(f"! image for draft #{row['id']}: {err}", file=sys.stderr)
 
 
-def photo_set_command(message: dict) -> tuple[str, int | str | None] | None:
+def photo_set_command(message: dict, *, in_thread: bool = False) -> tuple[str, int | str | None] | None:
     text = (message.get("content") or "").strip()
     if NO_SUPPORTING.search(text):
         return "clear", None
-    if ADD_PHOTO.search(text) and (url := source_url({"attachments": message.get("attachments")})):
+    attachments = {"attachments": message.get("attachments")}
+    if ADD_PHOTO.search(text) and (url := source_url(attachments)):
         return "attachment", url
     if match := SUPPORT_COMMAND.fullmatch(text):
         return ("gallery" if ADD_PHOTO.fullmatch(match[1]) else "remove"), int(match[2])
+    if in_thread and (url := source_url(attachments)):
+        return "attachment", url
     return None
 
 
@@ -1018,7 +1062,7 @@ def update_picker(cfg: dict, conn, row, payload: dict, taps: set[str],
     elif picker.get("override") and picker["override"]["taps"] != numbered:
         picker.pop("override")
 
-    channel, image_id = cfg["discord"]["channel_id"], payload["image_message_id"]
+    channel, image_id = discord.draft_channel(cfg, payload), payload["image_message_id"]
     urls = [candidates[i - 1]["url"] for i in selected]
     changed = urls != (payload.get("supporting") or [])
     refresh = (changed or manual is not None or added is not None or picker.get("dirty")
@@ -1034,7 +1078,8 @@ def update_picker(cfg: dict, conn, row, payload: dict, taps: set[str],
                                             ai_tries_left(cfg, conn, row["id"]),
                                             payload.get("image_card_note", "\n".join(image_review_notes(payload))),
                                             supporting=urls,
-                                            has_text=can_reletter(payload), attached=len(extra), picker=True)
+                                            has_text=can_reletter(payload), attached=len(extra), picker=True,
+                                            **image_card_version(cfg, payload))
             discord.edit_image_card(channel, image_id, card, payload["image_path"], extra)
             payload.update(supporting=urls, supporting_attached=len(extra))
         # Keep the new attachment state if Discord needs a second attempt to update the picker.
@@ -1059,7 +1104,7 @@ def sync_picker(cfg: dict, conn, row, payload: dict) -> set[str]:
     from babebasket import discord
 
     picker = payload["picker"]
-    channel = cfg["discord"]["channel_id"]
+    channel = discord.draft_channel(cfg, payload)
     taps = set()
     if message_id := picker.get("message_id"):
         emojis = [*discord.PICKER_NUMBERS[:len(picker["candidates"])], discord.PICKER_ZERO, discord.PHOTO]
@@ -1069,8 +1114,9 @@ def sync_picker(cfg: dict, conn, row, payload: dict) -> set[str]:
             prompt = discord.reply(channel, message_id, "Bảng ảnh đã đủ 9 ảnh rồi nha.")
             picker["photo_received"] = True
         else:
+            location = "thread này" if payload.get("thread_id") else "kênh này"
             prompt = discord.reply(channel, message_id,
-                                   "📷 Kéo thả ảnh của bạn vào kênh này (không cần Reply). "
+                                   f"📷 Kéo thả ảnh của bạn vào {location} (không cần Reply). "
                                    "Ảnh sẽ được thêm vào bảng ảnh.")
         picker.update(photo_prompt=prompt, photo_wait_since=db.now())
         db.set_payload(conn, row["id"], payload)
@@ -1082,10 +1128,11 @@ def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict], 
     """Handle photo-set replies in order. Retry the same replies if posting the replacement card fails."""
     from babebasket import discord
 
-    commands = [command for message in messages if (command := photo_set_command(message))]
+    in_thread = bool(payload.get("thread_id"))
+    commands = [command for message in messages if (command := photo_set_command(message, in_thread=in_thread))]
     if not commands:
         return False
-    channel = cfg["discord"]["channel_id"]
+    channel = discord.draft_channel(cfg, payload)
     old_card = payload["image_message_id"]
     urls = payload.get("supporting") or []
     attached = payload.get("supporting_attached")
@@ -1152,10 +1199,19 @@ def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict], 
     return True
 
 
+def archive_draft_thread(payload: dict) -> None:
+    from babebasket import discord
+
+    if thread_id := payload.get("thread_id"):
+        try:
+            discord.archive_thread(thread_id)
+        except Exception as err:
+            print(f"! archive Discord thread {thread_id}: {err}", file=sys.stderr)
+
+
 def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) -> None:
     from babebasket import discord
 
-    channel = cfg["discord"]["channel_id"]
     owners = cfg["discord"].get("owner_user_ids", [])
     waiting = db.drafts(conn, "image_pending")
     if photo_replies is None and any((json.loads(row["payload"]).get("picker") or {}).get("photo_prompt")
@@ -1164,6 +1220,8 @@ def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) 
         waiting = db.drafts(conn, "image_pending")
     for row in waiting:
         payload = json.loads(row["payload"])
+        channel = discord.draft_channel(cfg, payload)
+        in_thread = bool(payload.get("thread_id"))
         message_id = payload.get("image_message_id")
         if not message_id:
             continue
@@ -1180,11 +1238,11 @@ def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) 
             ignored = photo_replies or set()
             if picker and picker.get("photo_message"):
                 ignored = ignored | {picker["photo_message"]}
-            # With a single image card waiting, a plain message (not a Discord reply) is clearly for it.
+            # Main-channel drafts retain the single-waiting-card rule for plain messages.
             notes = discord.read_image_feedback(channel, message_id, owners, after=payload.get("feedback_seen"),
-                                                accept_plain=len(waiting) == 1,
+                                                accept_plain=in_thread or len(waiting) == 1,
                                                 also=tuple(i for i in (row["discord_message_id"],) if i),
-                                                ignore=ignored)
+                                                ignore=ignored, in_thread=in_thread)
             if notes["last_id"]:
                 payload["feedback_seen"] = notes["last_id"]
             feedback = notes["text"]
@@ -1198,7 +1256,10 @@ def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) 
                               "(Discord Developer Portal → Bot → Privileged Gateway Intents), then reply again.")
             if decision == "reject":
                 db.set_status(conn, row["id"], "rejected", decided_at=db.now())
-                discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+                try:
+                    discord.reply(channel, message_id, f"❌ Draft #{row['id']} dropped.")
+                finally:
+                    archive_draft_thread(payload)
             elif feedback and discord.TEXT in taps:  # 🔤 + reply: new words on the same scene, no AI call
                 decision = "text"
                 send_image_card(cfg, conn, row, payload, ai=False, text=feedback)
@@ -1220,14 +1281,17 @@ def cmd_check_images(cfg: dict, conn, *, photo_replies: set[str] | None = None) 
             elif decision == "edit" and payload.get("edit_hint_for") != message_id:  # ✏️ tapped, no reply yet
                 payload["edit_hint_for"] = message_id
                 db.set_payload(conn, row["id"], payload)
-                discord.reply(channel, message_id,
-                              "✏️ Reply to the image card with what to change, e.g. \"sản phẩm to hơn, nền sáng hơn\".")
+                hint = ("✏️ Gõ vào thread này điều bạn muốn sửa, ví dụ “sản phẩm to hơn, nền sáng hơn”."
+                        if in_thread else
+                        '✏️ Reply to the image card with what to change, e.g. "sản phẩm to hơn, nền sáng hơn".')
+                discord.reply(channel, message_id, hint)
             elif decision == "text" and payload.get("edit_hint_for") != message_id:  # 🔤 tapped, no reply yet
                 payload["edit_hint_for"] = message_id
                 db.set_payload(conn, row["id"], payload)
                 if can_reletter(payload):
-                    discord.reply(channel, message_id, "🔤 Reply thẻ ảnh bằng chữ mới: dòng 1 là tiêu đề, các dòng sau "
-                                                       "là các ý (tối đa 3). Chỉ 1 dòng thì chỉ đổi tiêu đề.")
+                    prompt = "Gõ chữ mới vào thread" if in_thread else "Reply thẻ ảnh bằng chữ mới"
+                    discord.reply(channel, message_id, f"🔤 {prompt}: dòng 1 là tiêu đề, các dòng sau "
+                                                      "là các ý (tối đa 3). Chỉ 1 dòng thì chỉ đổi tiêu đề.")
                 else:
                     discord.reply(channel, message_id, discord.TEXT_STYLE_NOTICE)
             else:
@@ -1274,10 +1338,47 @@ def warn_once_a_day(cfg: dict, conn, key: str, text: str) -> None:
         print(f"! warning not sent: {err}", file=sys.stderr)
 
 
+def send_publish_confirmation(cfg: dict, conn, row, payload: dict) -> None:
+    """Retry Discord delivery independently of publishing and keep the summary receipt."""
+    from babebasket import discord
+
+    draft_id, card = row["id"], row["discord_message_id"]
+    posted_channel = cfg["discord"].get("posted_channel_id")
+    if not posted_channel:
+        return
+    summary_sent = False
+    try:
+        if not payload.get("posted_message_id"):
+            payload["posted_message_id"] = discord.post_publish_summary(
+                posted_channel, draft_id, row["chosen_caption"] or 1, payload, payload["publish_confirmation"],
+                nonce=f"p-{card or draft_id}")
+            db.set_payload(conn, draft_id, payload)
+            summary_sent = True
+        if card:
+            result = "⚠️ Có nền tảng lỗi" if row["status"] == "publish_failed" else "✅ Đã đăng"
+            discord.reply(cfg["discord"]["channel_id"], card, f"{result} — xem <#{posted_channel}>",
+                          nonce=f"r-{card}")
+    except (Exception, SystemExit) as err:
+        print(f"! publish confirmation for draft #{draft_id}: {err}", file=sys.stderr)
+        return
+    finally:
+        if summary_sent:
+            archive_draft_thread(payload)
+    payload.pop("publish_confirmation")
+    db.set_payload(conn, draft_id, payload)
+
+
 def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
     from babebasket import discord, meta, threads
 
-    channel = cfg["discord"]["channel_id"]
+    posted_channel = cfg["discord"].get("posted_channel_id")
+    if posted_channel:
+        pending = conn.execute(
+            "SELECT * FROM drafts WHERE status IN ('published', 'publish_failed') "
+            "AND json_type(payload, '$.publish_confirmation') = 'array' ORDER BY id"
+        ).fetchall()
+        for row in pending:
+            send_publish_confirmation(cfg, conn, row, json.loads(row["payload"]))
     graph_version = cfg.get("meta", {}).get("graph_version", meta.DEFAULT_GRAPH_VERSION)
     meta_options = {"graph_version": graph_version} if graph_version != meta.DEFAULT_GRAPH_VERSION else {}
     platforms = {
@@ -1303,6 +1404,8 @@ def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
         draft_id = row["id"]
         card = row["discord_message_id"]
         payload = json.loads(row["payload"])
+        channel = discord.draft_channel(cfg, payload)
+        progress_card = payload.get("image_message_id") if payload.get("thread_id") else card
         posted = payload.setdefault("posted", {})
         if "threads" in payload:
             posted.setdefault("threads", payload["threads"])
@@ -1349,22 +1452,34 @@ def _publish_ready(cfg: dict, conn, enabled: list[str]) -> None:
                 note = ("dừng đăng" if platform in gave_up else
                         f"sẽ thử lại ({attempts[platform]}/{MAX_PUBLISH_ATTEMPTS})")
                 reply = f"⚠️ Draft #{draft_id} {label} lỗi, {note}: {str(err)[:300]}"
+                if posted_channel and platform in gave_up:
+                    payload.setdefault("publish_errors", {})[platform] = " ".join(str(err).split())[:150]
                 db.set_payload(conn, draft_id, payload)
                 print(f"! draft #{draft_id} {label} publish failed ({attempts[platform]}): {err}", file=sys.stderr)
             else:
                 posted[platform] = {**post, "published_at": db.now()}
+                if image_url and posted_channel:
+                    payload["published_image_url"] = image_url
                 link = post["permalink"] or "chưa lấy được link"
                 reply = f"{emoji} Đã đăng draft #{draft_id} lên {label}: {link}"
                 db.set_payload(conn, draft_id, payload)
                 print(f"draft #{draft_id}: published on {label} {post['permalink']}")
             try:
-                discord.reply(channel, card, reply)
+                discord.reply(channel, progress_card, reply)
             except (Exception, SystemExit) as err:
                 print(f"! reply for draft #{draft_id}: {err}", file=sys.stderr)
         status = "ready"
         if all(platform in posted or platform in gave_up for platform in enabled):
-            status = "published" if posted else "publish_failed"
+            complete = all(platform in posted for platform in enabled) if payload.get("thread_id") else bool(posted)
+            status = "published" if complete else "publish_failed"
+            if posted_channel and not payload.get("posted_message_id"):
+                payload.setdefault("publish_confirmation", enabled)
         db.set_status(conn, draft_id, status, payload=json.dumps(payload, ensure_ascii=False))
+        if status != "ready":
+            if posted_channel and payload.get("publish_confirmation"):
+                send_publish_confirmation(cfg, conn, {**row, "status": status}, payload)
+            elif not posted_channel:
+                archive_draft_thread(payload)
 
 
 def rossmann_product(page_path, ean: str | None) -> dict:

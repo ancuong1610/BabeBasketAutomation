@@ -86,6 +86,7 @@ max_tokens = 24576
 
 [discord]
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
+posted_channel_id = "1574691879352795156"   # #posted, one summary per finished draft
 owner_user_ids = []      # empty = every member of the server can approve (any non-bot user); or list user IDs to limit it
 
 [threads]
