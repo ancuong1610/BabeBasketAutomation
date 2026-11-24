@@ -237,7 +237,7 @@ def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[...
                  stage: str = "vision") -> dict:
     """Ask the text model (it reads images) a question about images; returns parsed JSON."""
     from babebasket import usage
-    from babebasket.llm import parse_json_reply
+    from babebasket.llm import DEFAULT_MAX_TOKENS, parse_json_reply
 
     content = [{"type": "text", "text": prompt}] + [
         {"type": "image_url", "image_url": {"url": f"data:{_mime(img)};base64," + base64.b64encode(img).decode()}}
@@ -245,6 +245,7 @@ def _vision_json(prompt: str, images: list[bytes], cfg: dict, post: Callable[...
     reply = post(OPENROUTER_URL, method="POST", timeout=90, retries=1,
                  headers={"Authorization": f"Bearer {api_key or secret('OPENROUTER_API_KEY')}", "X-Title": "babe basket"},
                  body={"model": cfg.get("llm", {}).get("model", "google/gemini-3.8-flash"), "temperature": 0,
+                       "max_tokens": cfg.get("llm", {}).get("max_tokens", DEFAULT_MAX_TOKENS),
                        "response_format": {"type": "json_object"}, **usage.REQUEST,
                        "messages": [{"role": "user", "content": content}]})
     usage.record(stage, reply, images_in=len(images))

@@ -15,6 +15,9 @@ from babebasket import usage
 from babebasket.http import request_json
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Output cap per request ([llm] max_tokens). Without it OpenRouter reserves the model maximum (65536) and a key
+# near its spending limit answers HTTP 402. Largest output seen 2026-11-10..24: 13.9k (gallery, mostly reasoning).
+DEFAULT_MAX_TOKENS = 24576
 
 SYSTEM_PROMPT = """Bạn là người viết nội dung cho "babe basket", một shop online bán đồ chăm sóc bản thân \
 được tuyển chọn từ các drugstore ở Đức (dm, Rossmann). Thông tin mua hàng (giá, cọc, thời gian) sốp để ở comment, \
@@ -324,6 +327,7 @@ def draft_post(product: dict, detail: dict, reviews: list[dict], cfg: dict, atte
                 "model": llm["model"],
                 "messages": messages,
                 "temperature": llm.get("temperature", 0.8),
+                "max_tokens": llm.get("max_tokens", DEFAULT_MAX_TOKENS),
                 "response_format": {"type": "json_object"},
                 **usage.REQUEST,
             },

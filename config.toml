@@ -80,6 +80,9 @@ rossmann = 10
 # Any OpenRouter model id. Pick one with good Vietnamese.
 model = "google/gemini-3.8-flash"
 temperature = 0.8
+# Output-token cap per request (captions, photo checks). Without it OpenRouter reserves 65536 tokens and a key
+# near its monthly limit gets HTTP 402 (2026-11-24). Largest real output so far: 13.9k.
+max_tokens = 24576
 
 [discord]
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)

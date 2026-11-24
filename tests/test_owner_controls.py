@@ -318,6 +318,35 @@ class UsageTest(unittest.TestCase):
         usage._pending.clear()
         self.assertEqual(sent["usage"], {"include": True})
 
+    def test_requests_cap_output_tokens(self):
+        # Without max_tokens OpenRouter reserves the model maximum (65536) and a near-limit key gets HTTP 402.
+        from babebasket import llm, scene
+
+        sent = {}
+
+        def post(url, **kw):
+            sent.update(kw["body"])
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+        scene._vision_json("q", [jpg()], {}, post, "k", stage="packaging")
+        self.assertEqual(sent["max_tokens"], llm.DEFAULT_MAX_TOKENS)
+        scene._vision_json("q", [jpg()], {"llm": {"max_tokens": 9000}}, post, "k", stage="packaging")
+        self.assertEqual(sent["max_tokens"], 9000)
+        usage._pending.clear()
+
+        bodies = []
+
+        def request(url, **kw):
+            bodies.append(kw["body"])
+            raise RuntimeError("stop after the first request")
+
+        with mock.patch.object(llm, "request_json", side_effect=request), \
+                mock.patch.object(llm, "secret", return_value="k"), \
+                mock.patch.object(llm, "build_messages", return_value=[]):
+            with self.assertRaises(RuntimeError):
+                llm.draft_post({}, {}, [], {"llm": {"model": "m", "max_tokens": 7000}})
+        self.assertEqual(bodies[0]["max_tokens"], 7000)
+
 
 class GalleryTest(unittest.TestCase):
     def test_parse_detail_keeps_every_photo(self):
