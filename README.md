@@ -1,304 +1,101 @@
-# babe basket automation
+<p align="center">
+  <img src="assets/logo.jpg" width="96" alt="babe basket logo">
+</p>
 
-Daily pipeline: scrape German drugstores → shortlist → LLM drafts in the shop's voice →
-Discord approval cards → publish to enabled Threads, Instagram and Facebook accounts.
-Nothing is published without an approval tap in Discord.
+<h1 align="center">babe basket automation</h1>
 
-Python 3.11+; install runtime deps with `pip install -r requirements.txt`. The browser downloads its Chromium runtime on first launch.
+<p align="center">
+  Finds well-reviewed products at German drugstores, writes Vietnamese posts about them,
+  and publishes each one once the owner approves it in Discord.
+</p>
 
-## Commands
+---
+
+**babe basket** sells German drugstore products (dm, Rossmann) to young Vietnamese women. This repository
+handles the shop's daily posting:
+- it picks good products every morning;
+- it writes captions in the shop's voice and works out a sale price in VND;
+- it makes a post image;
+- it publishes to Threads, Instagram and Facebook.
+
+**Nothing is published without the owner's ✅ in Discord.**
+
+![How a post is made: scrape, shortlist, draft, caption card, AI image, image thread, publish](docs/images/pipeline.svg)
+
+## A day with babe basket
+
+### 1. 07:00: today's picks arrive as caption cards
+
+The bot reads dm and Rossmann (prices, ratings, review texts and coupons) and picks about 10 products for the
+day. Each product gets its own card in **#approvals**, with a review summary, the text for the image and four
+captions. The card also shows prices for the owner only: shelf price, cost, suggested sale price, CTV
+price and deposit.
+
+The owner taps a number to pick a caption and an emoji to pick the image style, then taps ✅. ❌ drops the draft,
+and a replacement arrives on the next run.
+
+<p align="center"><img src="docs/images/discord-caption-card.jpg" width="440" alt="A caption card in Discord"></p>
+
+### 2. The post image is made after approval
+
+The image is made only after the caption is approved, so no image is wasted on a rejected post. It is a real
+packshot placed in one of four styles, with the shop's logo. A check compares the result with the real packaging
+and warns the owner when something looks different.
+
+![The four image styles: in the store, flat lay, close-up hand, texture](docs/images/image-styles.jpg)
+
+### 3. Review in the draft's own thread
+
+The image card opens a thread under its caption card, so every version and edit of a post stays in one place.
+The owner can:
+- type what to change ("sản phẩm to hơn, nền sáng hơn") to get a new AI version;
+- tap 🔤 to change only the words, which is free;
+- send a photo to add it to the post;
+- tap ✅ to post.
+
+<p align="center"><img src="docs/images/discord-image-thread.jpg" width="440" alt="The image card in its draft thread"></p>
+
+### 4. Published, with a receipt in #posted
+
+Within a minute of ✅ the post goes out to every enabled platform. **#posted** gets one summary per post:
+the caption and image version that were used, and a link or the error for each platform.
+
+<p align="center"><img src="docs/images/discord-posted.jpg" width="440" alt="The publish summary in #posted"></p>
+
+## Quick start
 
 ```sh
-python3 -m babebasket scrape            # dm (+ Rossmann once configured) -> data/babebasket.db + CSV
-python3 -m babebasket shortlist         # show today's picks with prices
-python3 -m babebasket draft             # product details + reviews + LLM drafts for the shortlist
-python3 -m babebasket post              # send the drafts to Discord as approval cards
-python3 -m babebasket check             # read caption + image approvals, make images, publish ready posts
-python3 -m babebasket daily             # scrape + draft + post
 python3 -m babebasket try dm 3050111    # one product end to end, printed; no Discord, no DB
+python3 -m babebasket daily             # scrape + draft + send caption cards
+python3 -m babebasket check             # read approvals, make images, publish ready posts
 python3 -m unittest                     # tests, no network
 ```
 
-## Approving in Discord
+Requirements:
+- Python 3.11+;
+- `pip install -r requirements.txt` (into `.venv`);
+- secrets in `.env` (see `.env.example`);
+- everything else in `config.toml`.
 
-Two steps per post, so no paid AI image is made for a post you reject.
+The other commands are `scrape`, `shortlist`, `draft`, `post`, `publish` and `costs`.
 
-**1. Caption card** (the store's packshot, prices, rating, review summary, label texts, 4 captions):
+## How it runs
 
-- 1️⃣–4️⃣ to pick the caption (no number = caption 1)
-- 🏪 🎨 🤲 🫧 to pick the image style before approving (see [Kiểu ảnh](#kiểu-ảnh))
-- ✅ to approve, ❌ to reject
-- 📷 to change the product photo before ✅. After the bot prompts you, send a photo, paste an image link,
-  or type the shop photo number (for example, `2`). With several drafts waiting, reply to the prompt
-  for the draft you want to change. For a shampoo and conditioner pair, add `xả` to change the
-  conditioner photo. You can also reply directly to the caption card with a photo, link, or `ảnh 2`.
-  If you already tapped ✅, the bot waits up to 10 minutes for the replacement.
-
-**2. Image card**, sent in its own thread under the caption card on the next `check` (≤1 min).
-The card shows the image version and the latest edit. When a new version arrives, the old card points to it.
-
-- ✅ Queue the current version for posting.
-- ❌ Drop the draft. This takes priority over other actions.
-- ✍️ Type what to change in the thread, e.g. “sản phẩm to hơn, nền sáng hơn”. A written edit
-  takes priority over ✅. Thread cards have no ✏️ (typing is the edit); old main-channel cards keep ✏️ as a reminder.
-- 🔤 On K0, tap 🔤 and type the new words to reuse the same scene without an AI call.
-  The first line is the title. Up to three more lines replace the points.
-- 📷 Send an image to the thread to add it to the set. Use the photo picker to choose which
-  supporting photos to publish.
-
-Existing image cards without a thread and cards that fall back to the main channel use the reply flow.
-The bot needs **Create Public Threads**, **Send Messages in Threads**, and **Message Content Intent**
-(Discord Developer Portal → your app → Bot → Privileged Gateway Intents).
-
-Publishing progress goes to the draft thread. If `[discord].posted_channel_id` is set, the bot sends one
-summary to **#posted** with the caption choice, image version, and links or errors for each enabled
-platform. A reply on the caption card points to **#posted**. The bot tries to archive the thread
-after publishing or rejection.
-
-Drafts move from `pending` to `approved` (caption), `image_pending`, then `ready` (image).
-For thread drafts, the final status is `published` when every enabled platform succeeds or
-`publish_failed` if any platform fails permanently.
-
-### Kiểu ảnh
-
-Tap one style emoji on the caption card before ✅. The approval reply confirms the style.
-If you tap several, the bot uses the first one in this list.
-On an older card, add a style emoji as a reaction yourself.
-
-- 🏪 **K0 · In the store** (default) shows the product in a drugstore aisle with the title, points, and logo.
-- 🎨 **K1 · Flat lay** shows the product on a pastel surface with a few small props.
-- 🤲 **K3 · Close-up hand** shows the product held against a soft studio gradient.
-- 🫧 **K4 · Texture** shows the product on a marble or pastel surface. A real shop photo of the contents is required for a swatch.
-
-K1, K3, and K4 get the round logo only. The plain fallback image keeps the usual text and logo.
-
-### Bộ ảnh của bài
-
-Ảnh chính đứng đầu. Bot dùng quy tắc khớp đầu tiên trong `[[photos.rule]]` để chọn ảnh thật từ shop.
-
-| Sản phẩm | Ảnh phụ theo thứ tự ưu tiên | Tổng ảnh tối đa |
+| What | When | How |
 |---|---|---|
-| Bộ quà tặng | Ảnh gốc của shop, ảnh các món bên trong bộ | 3 |
-| Đồ trang điểm | Màu trên môi, màu trên da, bảng màu, ảnh khi dùng, ảnh chất sản phẩm | 4 |
-| Kem và các danh mục trong cấu hình | Ảnh chất sản phẩm | 2 |
-| Nước hoa | Ảnh gốc của shop | 2 |
-| Thực phẩm bổ sung | Ảnh nhãn thành phần, dinh dưỡng hoặc liều dùng | 2 |
-| Cặp gội xả và các sản phẩm còn lại | — | 1 |
+| `daily`: scrape, pick, draft, send cards | 07:00 Europe/Berlin | n8n in Docker, over a restricted SSH key |
+| `check`: read approvals, make images, publish | every minute | LaunchAgent `com.babebasket.check` in the logged-in session |
 
-🏪 K0, 🎨 K1 và 🤲 K3 chỉ vẽ bao bì đóng. 🫧 K4 chỉ vẽ chất sản phẩm khi có ảnh thật của đúng sản phẩm
-và đúng màu để đối chiếu. Khi thiếu ảnh thật, K4 chỉ vẽ sản phẩm trên nền marble hoặc pastel.
+Each run logs to `data/logs/`. When a run fails, it posts a ⚠️ to Discord. A card that gets no decision within 3
+days expires on its own.
 
-Bảng ảnh nằm ngay dưới thẻ ảnh. Bấm số của những ảnh bạn muốn đăng kèm hoặc bấm lại để bỏ chọn.
-Khi không bấm số nào, bot dùng bộ ảnh đã tự chọn. Bấm 0️⃣ nếu chỉ muốn đăng ảnh chính.
-Bấm 📷 để thêm ảnh của bạn, rồi kéo thả ảnh vào kênh sau khi bot nhắc. Bot cập nhật thẻ ảnh trong khoảng
-1 phút. Kiểm tra bộ ảnh trên thẻ rồi bấm ✅.
+## Documentation
 
-## Setup on the Mac mini
-
-1. `git clone` this repo, `cd` into it.
-2. `cp .env.example .env` and fill in:
-   - `OPENROUTER_API_KEY`: openrouter.ai → Keys
-   - `DISCORD_BOT_TOKEN`: Discord Developer Portal → your app → Bot → Reset Token
-   - `DISCORD_CHANNEL_ID`: in Discord turn on Developer Mode, right-click the approval channel → Copy Channel ID
-3. Put your own Discord user ID in `config.toml` → `[discord] owner_user_ids`, so only your taps count.
-4. Run `./scripts/setup_mac.sh`: runs the tests, one LLM draft, and a Discord test message.
-
-### Facebook & Instagram
-
-Link an Instagram Business or Creator account to your Facebook Page. Give the Meta app the
-`instagram_content_publish`, `instagram_basic`, `pages_manage_posts`, and `pages_read_engagement`
-permissions for the accounts it will publish to.
-
-- `META_PAGE_ACCESS_TOKEN` is the long-lived Facebook Page token shared by both publishers.
-- `FACEBOOK_PAGE_ID` is the Facebook Page ID.
-- `INSTAGRAM_USER_ID` is the linked Instagram professional account ID.
-
-Set these values in `.env`, then set `enabled = true` under `[facebook]`, `[instagram]`, or both in
-`config.toml`. Both are disabled by default. `[meta] graph_version` defaults to `v21.0`.
-
-### n8n
-
-n8n runs in Docker, so it reaches the Mac over SSH (`host.docker.internal`) and runs
-`scripts/run.sh` there: it finds Python 3.11+, logs to `data/logs/`, and posts a ⚠️ alert to
-the Discord channel if a run fails.
-
-| File | Schedule (Europe/Berlin) | SSH command |
-|---|---|---|
-| `n8n/daily.json` | 07:00 daily | `daily`: scrape, draft, send cards |
-| `n8n/check.json` | **inactive since 2026-11-22** | replaced by the LaunchAgent below |
-
-`check` (every minute: read approvals, make images, publish) runs as a LaunchAgent in the
-logged-in GUI session instead: `scripts/install_check_agent.sh` (`remove` to uninstall). Reason:
-Chrome started over SSH cannot read the login keychain and loses the Gemini sign-in for good,
-so `gemini_web` refuses to run over SSH. Do not reactivate the n8n check workflow while the
-agent is installed. Status: `launchctl print gui/$(id -u)/com.babebasket.check`.
-
-One-time setup (already done on the Mac mini):
-1. System Settings → General → Sharing → Remote Login on.
-2. A dedicated key `~/.ssh/n8n_babebasket`, listed in `~/.ssh/authorized_keys` as
-   `restrict,command="~/BabeBasketAutomation/scripts/ssh_gate.sh" …`, so it can only run
-   `daily` or `check` (no shell, no forwarding).
-3. Import: `docker cp n8n/daily.json n8n-n8n-1:/tmp/ && docker exec n8n-n8n-1 n8n import:workflow --input=/tmp/daily.json`
-   (same for `check.json`). The fixed workflow ids make re-imports update in place.
-4. In n8n: Credentials → New → SSH Private Key, name `Mac mini (babebasket)`, host
-   `host.docker.internal`, port 22, user = your Mac user, private key = contents of
-   `~/.ssh/n8n_babebasket`. Select it in each workflow's SSH node, run once, then set Active.
-
-## Post image
-
-Made only after the caption is approved (step 2 above), as one finished image (1080×1350):
-
-1. `scene.py` sends the dm/Rossmann packshot to a Gemini image model on OpenRouter
-   (`[image] model` in `config.toml`), which returns a photo in the approved style.
-   Any failure → `postimage.fallback_scene` (packshot on a cream background).
-   Before that, the text model reads the packshot and writes down the packaging facts
-   (container, opaque or transparent, colours and finish, cap/pump), which go into the image
-   prompt as hard rules: iridescent bottles were coming out as clear plastic without them.
-   In K0 and K3, the product's amount from its name ("1.000 ml") sets its true size relative
-   to the hand. After the image is made, the text model
-   compares it with the packshot; if a customer would notice a difference, the image card
-   says what differs ("⚠️ Có thể khác bao bì thật: …") so the owner can ✏️ or ❌.
-2. `postimage.py` adds the round logo from `assets/logo.jpg`. For K0 and the plain fallback,
-   it also draws the text from `labels` in Be Vietnam Pro.
-3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
-
-Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
-(default 3: the first image + two ✏️ edits) and `max_per_day` (default 30) cap the paid image requests; past a
-cap the plain background is used and the card says so. `enabled = false` turns AI images off entirely.
-
-Every OpenRouter call (caption, packaging, image, image_edit, fidelity, coupon) is stored in the
-`ai_calls` table with its draft, tokens and the cost OpenRouter reports. See it with
-`python3 -m babebasket costs` (last 7 days; `--days 30` for more).
-
-Try one product: `.venv/bin/python -m babebasket try dm 3050111 --image`.
-Needs `pip install -r requirements.txt` in `.venv` (Pillow); `run.sh` uses `.venv` automatically.
-
-### Free images: Gemini in Chrome (`[image] backend = "gemini_web"`)
-
-Instead of the paid OpenRouter image model, `babebasket/gemini_web.py` drives real Google Chrome
-(Playwright, visible window) with the owner's Gemini Plus account: a new chat per image,
-"Create image", the packshot uploaded, ratio 3:4 (1792×2400, cropped to 1080×1350 later),
-the first image Gemini returns downloaded straight into memory (never via `~/Downloads`).
-The packaging description and fidelity check still use the text model on OpenRouter.
-
-1. Sign in once (owner only, by hand): `.venv/bin/python -m babebasket gemini-login`, sign in to
-   Gemini in the Chrome that opens, then quit that Chrome with Cmd+Q. The profile lives in
-   `~/.babebasket/gemini-profile`; it must not be open while the pipeline runs.
-2. Test one image, no DB/Discord: `.venv/bin/python -m babebasket gemini-test data/gemini_test/serum.png`.
-
-Safety: at most 30 images a day (`[image.gemini_web] daily_cap`, counted in
-`~/.babebasket/gemini-daily-count.json`), a random 5–10 s gap between images. A sign-in page,
-captcha or "unusual traffic" stops it: one ⚠️ on Discord, plain backgrounds until
-`gemini-login` is run again. Chrome needs the Mac mini's GUI session to be logged in.
-Automating the Gemini web app may break Google's terms; the account could be limited.
-Switch back any time with `backend = "openrouter"`.
-
-## What gets picked
-
-Customers are Vietnamese girls and young women, from high school to about 35: students and
-young workers buying self-care consumables. Each day 10 drafts, by group (`[groups]` in `config.toml`):
-
-| Group | Per day | What | Minimum |
-|---|---|---|---|
-| hair | 5 | shampoo, conditioner, masks, leave-in, oils, styling | 4.0★, 10 reviews |
-| body | 3 | body lotion/cream/oil, deo roll-on/stick, hand & foot care, shower gel, scrub, bath salt, intimate wash | 4.0★, 10 reviews |
-| extra | 2 | sun care, skincare, beauty supplements (skin/hair/nails/figure), gift sets, men's products | 4.5★, 100 reviews |
-| makeup | 1 | coloured lip make-up: lipstick, lip gloss, lip oil/tint, lip liner | 4.0★, 10 reviews |
-
-If a group has nothing good enough that day, the best of the others fills the gap.
-
-Shampoo and conditioner are sold as a pair: when a shampoo (or conditioner) is picked, the
-bot looks for its twin of the same brand and line ("Shampoo Traube Hydraboost" +
-"Conditioner Traube Hydraboost"; dm lists them apart). The pair is one post: one caption
-for the set, both bottles in the picture, combined shelf price on the card; the caption card
-shows each bottle with its own link and photo. With no twin the product is sold on its own; if a
-twin exists but cannot go out, neither is picked. 2in1 products never need one. Only a rinse-out
-conditioner counts as a twin: express/spray conditioners, leave-ins, masks and treatments are
-sold alone (a shampoo's line must match exactly, or differ only by harmless words).
-At most 2 products per brand per day, and no product again within 45 days.
-
-**Every ❌ is replaced.** When a caption or image card of today's list is rejected, the next
-`check` drafts a replacement (same group first, never a product already offered today) and
-posts its card, so the day keeps `[shortlist] per_day` posts. At most `refill_max_per_day`
-replacements a day.
-
-**Prices on the card** follow the shop's price sheet (`[pricing]`, `babebasket/pricing.py`):
-shelf price minus coupon → VND at the buffered rate + cargo by weight + packaging + 5 % risk =
-cost; suggested sale price = cost ÷ (1 − 5 % fee − 30 % margin), rounded up; plus CTV price
-and deposit. The weight is estimated from the pack size in the name (marked "ước lượng"). The
-card says whether a coupon or a store offer is already counted. Captions never show a price.
-
-Never picked (`babebasket/catalog.py`):
-- anything with a flammability or pressure warning (cannot be shipped to Vietnam). For dm this is
-  read from the product page's warnings ("Extrem entzündbares Aerosol…"), so pump sprays stay
-  in. Rossmann pages cannot be read, so Rossmann products named spray or mousse are skipped.
-- dry shampoo, hair spray, accessories (brushes, sponges, hair ties), electrical devices, massage items
-- perfume, except Jean & Len hair perfume
-- supplements that are not for skin, hair, nails or figure
-
-Price: most customers are students, so products over €10 rank lower and over €20 are skipped.
-Gift sets may cost up to €40.
-
-Captions for figure/weight products never use "giảm cân", "giảm mỡ", "đốt mỡ", "tan mỡ" or
-"giảm béo" (Threads and Instagram cut their reach). They are written indirectly and stick
-to the maker's claims.
-
-## Coupons (#coupons)
-
-App coupons sit behind the owner's login, so they are never scraped. Instead:
-
-- Post a **screenshot** of the dm or Rossmann app's coupon tab in the Discord channel
-  **#coupons** (one screenshot can hold many coupons), or type a short note such as
-  `dm 20% Balea đến 30.11` or `Rossmann 10-fach Payback Haarpflege bis 24.11.`
-- On the next `check` (≤1 min) the text model reads it, saves each coupon with its end date
-  and replies with what it understood. ❌ on that reply deletes those coupons.
-- While a coupon is valid, products it covers rank higher (`[shortlist] coupon_weight`:
-  20 % → score ×1.4; PAYBACK "10-fach" counts as 5 %). Whole-purchase coupons don't change the
-  ranking but lower the cost. The caption card shows "🎟️ Coupon … · đến 30.11" and the cost
-  after the coupon. Expired coupons stop counting by themselves.
-
-Rossmann's public offers pages (`[rossmann] offer_pages`: Angebote and Neu im Sortiment) are read
-on every run that includes Rossmann. Each discounted product ("20% Sparen", struck-through old
-price, "Aus der Werbung" = weekly flyer) becomes a 7-day boost, replaced by the next run. The
-scraped price already includes the discount, so it is not subtracted again. "Neu" products
-feed the daily new-product pick like any unrated product. To look for more offers pages:
-`python3 -m babebasket.stores.rossmann probe-offers`.
-
-## Settings
-
-All in `config.toml`: product groups and their dm categories, shortlist thresholds, preferred brands,
-the pricing rule (exchange rate, shipping, markup), standing coupon per store, LLM model,
-Discord channel and owner.
-
-Captions carry no price: they end by inviting customers to inbox the shop, and the owner
-quotes prices privately. Captions that mention a price or use "tiền" are sent back to the
-LLM to fix. The caption card still shows the store's shelf price (€) for the owner.
-
-## Data sources
-
-### dm
-
-| Data | Endpoint |
+| Read | For |
 |---|---|
-| Category listing (price, rating, review count, images) | `product-search.services.dmtech.com/de/search/crawl?categoryNames=…` |
-| Product detail (claims, usage, ingredients) | `products.dm.de/product/products/detail/DE/dan/{dan}` |
-| Ratings, batched | `stars.services.dmtech.com/api/DE/v3/ratings/{dan,dan,…}/summary` |
-| Review texts | `stars.services.dmtech.com/api/DE/v3/reviews/{dan}?sortation=relevance` |
-
-These are the JSON endpoints dm.de's own pages call. dm rate-limits quickly, so the
-scraper waits 10 s between categories and backs off on 429. Crawl approach after
-[badlogic/heissepreise](https://github.com/badlogic/heissepreise) (MIT).
-
-### Rossmann
-
-Rossmann's robots.txt blocks Claude's crawlers, so this module was written without
-looking at rossmann.de. Run the probe yourself once:
-
-```sh
-python3 -m babebasket.stores.rossmann probe --keyword haar
-```
-
-It saves `rossmann_probe/report.json` and two sample pages. Commit that folder, and the
-parser gets fitted to the real page structure. Then add category URLs to
-`config.toml` → `[rossmann] categories`. The code keeps to Rossmann's robots.txt
-(no search pages, no query strings except `?pageIndex=`).
+| [Approving in Discord](docs/approving.md) | every emoji, the image styles, choosing the photo set, draft statuses |
+| [Post images](docs/post-images.md) | how the image is made, fidelity check, costs, the free Gemini-in-Chrome backend |
+| [What gets picked](docs/picking.md) | product groups, pairs, the price formula, coupons (#coupons), the never-pick list, data sources |
+| [Setup and scheduling](docs/setup.md) | `.env`, Facebook and Instagram, n8n, the `check` LaunchAgent |
+| [Content guide](docs/content-guide.md) | the shop's voice and caption rules |
+| [Privacy policy](docs/privacy-policy.md) · [Data deletion](docs/data-deletion.md) | for the Meta app |
