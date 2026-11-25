@@ -1200,6 +1200,34 @@ def update_photo_set(cfg: dict, conn, row, payload: dict, messages: list[dict], 
     return True
 
 
+WAITING = ("pending", "image_pending")
+
+
+def expire_stale(cfg: dict, conn, *, now: str | None = None) -> list[int]:
+    """Close drafts that waited longer than [discord] expire_after_days without a decision (0 or unset = off).
+    Old cards stay on Discord but are no longer polled, so the per-minute check stays under the rate limit."""
+    days = cfg.get("discord", {}).get("expire_after_days", 0)
+    if not days:
+        return []
+    current = dt.datetime.fromisoformat(now or db.now())
+    cutoff = (current - dt.timedelta(days=days)).isoformat(timespec="seconds")
+    expired = []
+    for status in WAITING:
+        for row in db.drafts(conn, status):
+            if row["created_at"] >= cutoff:
+                continue
+            payload = json.loads(row["payload"])
+            payload["closed_reason"] = f"expired: no decision within {days} days"
+            db.set_status(conn, row["id"], "expired", decided_at=current.isoformat(timespec="seconds"),
+                          payload=json.dumps(payload, ensure_ascii=False))
+            archive_draft_thread(payload)
+            expired.append(row["id"])
+    expired.sort()
+    if expired:
+        print(f"expired {len(expired)} waiting draft(s) older than {days} days: {expired}")
+    return expired
+
+
 def archive_draft_thread(payload: dict) -> None:
     from babebasket import discord
 
@@ -1618,6 +1646,7 @@ def main(argv: list[str] | None = None) -> int:
             photo_replies = cmd_source_replies(cfg, conn)
         except Exception as err:
             print(f"! source photos: {err}", file=sys.stderr)
+        expire_stale(cfg, conn)       # stop polling cards nobody decided on
         cmd_check(cfg, conn)          # caption cards
         cmd_check_images(cfg, conn, photo_replies=photo_replies)
         cmd_images(cfg, conn)         # make images for newly approved captions

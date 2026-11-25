@@ -88,6 +88,7 @@ max_tokens = 24576
 channel_id = "1572004160923115541"          # the approval channel (right-click channel -> Copy Channel ID)
 posted_channel_id = "1574691879352795156"   # #posted, one summary per finished draft
 owner_user_ids = []      # empty = every member of the server can approve (any non-bot user); or list user IDs to limit it
+expire_after_days = 3    # waiting caption/image cards older than this are closed ('expired') and no longer polled; 0 = off
 
 [threads]
 # Post approved drafts (✅ + caption number on Discord) to the Threads account of THREADS_ACCESS_TOKEN.
