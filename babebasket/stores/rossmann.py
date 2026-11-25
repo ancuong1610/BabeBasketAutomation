@@ -37,6 +37,7 @@ SITE = "https://www.rossmann.de"
 SITEMAP_INDEX = SITE + "/de/sitemap_index.xml"
 DELAY_SECONDS = 5.0
 MAX_PAGES = 15
+RETRY_SECONDS = 20.0
 
 
 def allowed(url: str) -> bool:
@@ -266,10 +267,17 @@ def crawl_category(url: str, delay: float = DELAY_SECONDS) -> list[dict]:
     try:
         for page_index in range(MAX_PAGES):
             page_url = url if page_index == 0 else f"{url}?pageIndex={page_index}"
-            page = fetch_html(page_url)
-            if "Client Challenge" in page:
+            # Page 0 gets one retry: an occasional run gets an empty or challenge page (2026-11-25).
+            for attempt in range(2 if page_index == 0 else 1):
+                if attempt:
+                    time.sleep(RETRY_SECONDS)
+                page = fetch_html(page_url)
+                challenged = "Client Challenge" in page
+                found = [] if challenged else parse_page(page, scraped_at)
+                if found or page_index:
+                    break
+            if challenged:
                 raise RuntimeError(f"challenge did not clear: {page_url}")
-            found = parse_page(page, scraped_at)
             if page_index == 0 and not found:
                 raise RuntimeError(f"page 0 yielded no products: {page_url}")
             new = [r for r in found if r["product_id"] not in rows]

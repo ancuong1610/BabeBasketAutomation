@@ -6,3 +6,4 @@ __pycache__/
 rossmann_probe/*.html
 .venv
 .superpowers/
+rossmann_probe/report.json

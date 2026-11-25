@@ -99,3 +99,36 @@ class PostFailureTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrawlRetryTest(unittest.TestCase):
+    """Page 0 gets one retry when it comes back empty or as the challenge page."""
+
+    def crawl(self, pages):
+        fetched = []
+        def fake_fetch(url):
+            fetched.append(url)
+            return pages.pop(0)
+        parse = lambda page, scraped_at="": [{"product_id": page}] if page.startswith("ok") else []
+        with mock.patch.object(rossmann, "fetch_html", fake_fetch), \
+             mock.patch.object(rossmann, "parse_page", parse), \
+             mock.patch.object(rossmann, "_close_browser"), \
+             mock.patch.object(rossmann.time, "sleep"):
+            return rossmann.crawl_category("https://www.rossmann.de/de/x/c/1", delay=0), fetched
+
+    def test_empty_page0_retried_once(self):
+        rows, fetched = self.crawl(["", "ok-a", "ok-a"])
+        self.assertEqual([r["product_id"] for r in rows], ["ok-a"])
+        self.assertEqual(fetched[:2], ["https://www.rossmann.de/de/x/c/1"] * 2)
+
+    def test_challenge_page0_retried_once(self):
+        rows, _ = self.crawl(["<title>Client Challenge</title>", "ok-a", "ok-a"])
+        self.assertEqual(len(rows), 1)
+
+    def test_still_empty_after_retry_raises(self):
+        with self.assertRaisesRegex(RuntimeError, "page 0 yielded no products"):
+            self.crawl(["", ""])
+
+    def test_still_challenged_after_retry_raises(self):
+        with self.assertRaisesRegex(RuntimeError, "challenge did not clear"):
+            self.crawl(["Client Challenge", "Client Challenge"])

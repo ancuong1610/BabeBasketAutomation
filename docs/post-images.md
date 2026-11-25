@@ -13,13 +13,13 @@ Made only after the caption is approved ([image card](approving.md), step 2), as
    In K0 and K3, the product's amount from its name ("1.000 ml") sets its true size relative
    to the hand. After the image is made, the text model
    compares it with the packshot; if a customer would notice a difference, the image card
-   says what differs ("⚠️ Có thể khác bao bì thật: …") so the owner can ✏️ or ❌.
+   says what differs ("⚠️ Có thể khác bao bì thật: …") so the owner can type a change in the thread or tap ❌.
 2. `postimage.py` adds the round logo from `assets/logo.jpg`. For K0 and the plain fallback,
    it also draws the text from `labels` in Be Vietnam Pro.
 3. Saved as `data/images/draft-<id>-v<n>.jpg` and sent as the image card.
 
 Cost control (`[image]` in `config.toml`): each AI image costs about $0.08. `max_per_post`
-(default 3: the first image + two ✏️ edits) and `max_per_day` (default 30) cap the paid image requests; past a
+(default 3: the first image + two typed edits) and `max_per_day` (default 30) cap the paid image requests; past a
 cap the plain background is used and the card says so. `enabled = false` turns AI images off entirely.
 
 Every OpenRouter call (caption, packaging, image, image_edit, fidelity, coupon) is stored in the

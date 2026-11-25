@@ -115,7 +115,7 @@ model = "google/gemini-3.1-flash-image"
 enabled = true
 # AI images are made only after the caption is approved (about $0.08 each).
 max_per_day = 30         # paid image requests per day; after that the plain background is used
-max_per_post = 3         # first image + two ✏️ edits
+max_per_post = 3         # first image + two typed edits
 # Where the AI image comes from:
 #   "openrouter" = paid API (model above, ~$0.08 each)
 #   "gemini_web" = free: the owner's Gemini Plus in real Chrome (babebasket/gemini_web.py).

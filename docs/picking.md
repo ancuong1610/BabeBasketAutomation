@@ -5,7 +5,7 @@ Product selection, pricing, coupons, settings and data sources. Back to the [REA
 ## What gets picked
 
 Customers are Vietnamese girls and young women, from high school to about 35: students and
-young workers buying self-care consumables. Each day 10 drafts, by group (`[groups]` in `config.toml`):
+young workers buying self-care consumables. Each day 11 drafts, by group (`[groups]` in `config.toml`):
 
 | Group | Per day | What | Minimum |
 |---|---|---|---|
@@ -107,7 +107,8 @@ looking at rossmann.de. Run the probe yourself once:
 python3 -m babebasket.stores.rossmann probe --keyword haar
 ```
 
-It saves `rossmann_probe/report.json` and two sample pages. Commit that folder, and the
-parser gets fitted to the real page structure. Then add category URLs to
-`config.toml` → `[rossmann] categories`. The code keeps to Rossmann's robots.txt
+It saves `rossmann_probe/report.json` and two sample pages (both gitignored). The parser was fitted
+to those pages on 2026-11-17; run the probe again only if Rossmann changes its page structure.
+Category URLs go in `config.toml` → `[rossmann] categories`. An empty first page is retried once
+after 20 s before the source counts as failed. The code keeps to Rossmann's robots.txt
 (no search pages, no query strings except `?pageIndex=`).
